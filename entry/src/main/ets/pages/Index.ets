@@ -56,16 +56,16 @@ struct Index {
       return;
     }
     const down: boolean = event.type === KeyType.Down;
-    const sdl: number = XtScanCodeMap.sdlCodeFor(event.keyCode, event.keyText);
-    if (sdl < 0) {
-      return;
-    }
     const alt: boolean = event.getModifierKeyState !== undefined
       ? event.getModifierKeyState(['alt']) : false;
     const shift: boolean = event.getModifierKeyState !== undefined
       ? event.getModifierKeyState(['shift']) : false;
     const ctrl: boolean = event.getModifierKeyState !== undefined
       ? event.getModifierKeyState(['ctrl']) : false;
+    const sdl: number = XtScanCodeMap.sdlCodeFor(event.keyCode, event.keyText, shift, ctrl);
+    if (sdl < 0) {
+      return;
+    }
     this.emu.injectKey(XtScanCodeMap.buildKeyValue(sdl, alt, shift, ctrl, !down));
   }
 

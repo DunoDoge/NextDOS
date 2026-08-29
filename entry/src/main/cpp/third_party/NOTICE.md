@@ -1,5 +1,25 @@
 # Third-party components
 
+## 8086tiny BIOS
+- Path: `entry/src/main/resources/rawfile/bios` (binary, "8086tiny BIOS Revision 1.61")
+- Upstream: https://github.com/adriancable/8086tiny
+- Author: Adrian Cable (adrian.cable@gmail.com)
+- License: MIT
+
+The binary carries a 2-byte local patch so the Delete key works through the
+keysym path of the INT 7 handler (F000:0332). Upstream decodes keysym 0x7F
+(SDLK_DELETE) into "ASCII 8 + Backspace scan code", which makes Delete behave
+as Backspace and leaves the real Delete key unreachable:
+
+1. Offset 0x350: `b0 08` (mov al, 8) -> `b0 00` (mov al, 0) — keysym 0x7F
+   keeps ASCII 0 instead of being rewritten to 8.
+2. Offset 0x14D9: ASCII->scan-code table entry [0x00] `ff` -> `53` — so the
+   keysym decodes to scan code 0x53 (Delete make code) instead of 0xFF.
+
+Result: keysym 0x7F produces a standard (AL=0, AH=0x53) Delete keystroke.
+If the BIOS binary is ever replaced with a fresh upstream copy, re-apply the
+patch (see `tools/verify_keymap.py` for the full decode model).
+
 ## 8086tiny
 - Path: `third_party/8086tiny/8086tiny.c`
 - Upstream: https://github.com/adriancable/8086tiny (Revision 1.25)

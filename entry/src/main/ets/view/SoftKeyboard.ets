@@ -204,6 +204,11 @@ export struct SoftKeyboard {
     this.emu.injectKey(value);
   }
 
+  /** Keysym a non-modifier key sends: character keys get the Ctrl translation. */
+  private keySdl(key: SoftKeyDef): number {
+    return XtScanCodeMap.applyCtrl(key.sdl >= 0 ? key.sdl : this.charCodeOf(key), this.ctrlOn);
+  }
+
   private pressKey(key: SoftKeyDef): void {
     if (key.id === 'ctrl') {
       this.ctrlOn = !this.ctrlOn;
@@ -220,8 +225,7 @@ export struct SoftKeyboard {
       this.emitModifier(key.sdl, this.shiftOn);
       return;
     }
-    const sdl: number = key.sdl >= 0 ? key.sdl : this.charCodeOf(key);
-    const value: number = XtScanCodeMap.buildKeyValue(sdl, this.altOn, this.shiftOn, this.ctrlOn, false);
+    const value: number = XtScanCodeMap.buildKeyValue(this.keySdl(key), this.altOn, this.shiftOn, this.ctrlOn, false);
     this.emu.injectKey(value);
   }
 
@@ -229,8 +233,7 @@ export struct SoftKeyboard {
     if (this.isModifier(key)) {
       return;
     }
-    const sdl: number = key.sdl >= 0 ? key.sdl : this.charCodeOf(key);
-    const value: number = XtScanCodeMap.buildKeyValue(sdl, this.altOn, this.shiftOn, this.ctrlOn, true);
+    const value: number = XtScanCodeMap.buildKeyValue(this.keySdl(key), this.altOn, this.shiftOn, this.ctrlOn, true);
     this.emu.injectKey(value);
   }
 
