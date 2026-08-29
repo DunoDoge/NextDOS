@@ -21,6 +21,7 @@ add_library(entry SHARED
     napi_init.cpp
     host_interface.cpp
     audio_output.cpp
+    vdisk.cpp
     third_party/8086tiny/8086tiny.c
 )
 target_link_libraries(entry PUBLIC

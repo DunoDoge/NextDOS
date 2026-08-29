@@ -12,6 +12,7 @@
 #include <fcntl.h>
 
 #include "host_interface.h"
+#include "vdisk.h"
 
 // Emulator system constants
 #define IO_PORT_COUNT 0x10000
@@ -249,15 +250,19 @@ int host_speaker_sample(void)
 
 // Emulator entry point: opens the disk images once, then repeatedly (re)loads
 // the BIOS and executes instructions until the host requests a stop.
-int emulator_run(const char *bios_path, const char *floppy_path, const char *harddisk_path)
+int emulator_run(const char *bios_path, const char *floppy_path, const char *harddisk_path, const char *vdisk_dir)
 {
 	// regs16 and regs8 point to F000:0, the start of memory-mapped registers.
 	regs16 = (unsigned short *)(regs8 = mem + REGS_BASE);
 
-	// Open BIOS (file id disk[2]), floppy disk image (disk[1]), and hard disk image (disk[0]).
+	// Mount the directory-backed C: drive first; when it is active the raw
+	// harddisk image path is ignored for the whole run.
+	int vdisk_mounted = vdisk_dir && vdisk_mount(vdisk_dir) == 0;
+
+	// Open BIOS (file id disk[2]), floppy disk image (disk[1]), hard disk image (disk[0]).
 	disk[2] = open(bios_path, O_RDONLY);
 	disk[1] = floppy_path ? open(floppy_path, O_RDWR) : 0;
-	disk[0] = harddisk_path ? open(harddisk_path, O_RDWR) : 0;
+	disk[0] = (harddisk_path && !vdisk_mounted) ? open(harddisk_path, O_RDWR) : 0;
 
 	for (;;)
 	{
@@ -270,9 +275,11 @@ int emulator_run(const char *bios_path, const char *floppy_path, const char *har
 		// Boot from the floppy drive (DL = 0)
 		regs8[REG_DL] = 0;
 
-		// Set CX:AX equal to the hard disk image size (0 here: no HD image),
-		// before every BIOS reload so a reset sees consistent disk geometry.
-		CAST(unsigned)regs16[REG_AX] = *disk ? lseek(*disk, 0, 2) >> 9 : 0;
+		// Set CX:AX equal to the hard disk image size, before every BIOS reload
+		// so a reset sees consistent disk geometry. The virtual directory disk
+		// reports its full device size (protective MBR area + FAT12 volume).
+		CAST(unsigned)regs16[REG_AX] = vdisk_mounted ? vdisk_total_sectors()
+			: (*disk ? lseek(*disk, 0, 2) >> 9 : 0);
 
 	// Load BIOS image into F000:0100, and set IP to 0100
 	lseek(disk[2], 0, 0);
@@ -674,6 +681,15 @@ int emulator_run(const char *bios_path, const char *floppy_path, const char *har
 						CAST(short)mem[SEGREG(REG_ES, REG_BX, 36+)] = ms_clock.millitm;
 					OPCODE 2: // DISK_READ
 					OPCODE_CHAIN 3: // DISK_WRITE
+					// With the directory-backed C: drive mounted, DL=0 (the
+					// drive number the BIOS uses for the hard disk) is served
+					// by the virtual FAT12 disk; byte counts match the raw
+					// image semantics exactly (count*512, or 0 on failure).
+					if (vdisk_mounted && regs8[REG_DL] == 0)
+						regs8[REG_AL] = (char)i_data0 == 2
+							? vdisk_read_sectors(CAST(unsigned)regs16[REG_BP], mem + SEGREG(REG_ES, REG_BX,), regs16[REG_AX])
+							: vdisk_write_sectors(CAST(unsigned)regs16[REG_BP], mem + SEGREG(REG_ES, REG_BX,), regs16[REG_AX]);
+					else
 						regs8[REG_AL] = ~lseek(disk[regs8[REG_DL]], CAST(unsigned)regs16[REG_BP] << 9, 0)
 							? ((char)i_data0 == 3 ? (int(*)())write : (int(*)())read)(disk[regs8[REG_DL]], mem + SEGREG(REG_ES, REG_BX,), regs16[REG_AX])
 							: 0;
@@ -762,5 +778,9 @@ int emulator_run(const char *bios_path, const char *floppy_path, const char *har
 	}
 
 emulator_done:
+	if (disk[0] > 2) close(disk[0]);
+	if (disk[1] > 2) close(disk[1]);
+	if (disk[2] > 2) close(disk[2]);
+	vdisk_unmount();
 	return 0;
 }

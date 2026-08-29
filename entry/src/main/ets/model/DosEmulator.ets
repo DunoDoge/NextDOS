@@ -18,6 +18,7 @@ export class DosEmulator {
 
   private biosPath: string = '';
   private floppyPath: string = '';
+  private mountedFolder: string = '';
   private timerId: number = -1;
   private lastSeq: number = 0;
   private running: boolean = false;
@@ -50,6 +51,44 @@ export class DosEmulator {
     testNapi.start(this.floppyPath);
     this.running = true;
     this.paused = false;
+  }
+
+  /**
+   * Mounts a raw hard disk image as the emulated C: drive. The emulator thread
+   * is restarted so the core re-opens the disk, so a running session is
+   * stopped and started again.
+   */
+  mountImage(path: string): void {
+    this.stop();
+    testNapi.mountImage(path);
+    this.start();
+  }
+
+  /**
+   * Mounts a host folder as the emulated C: drive (virtual FAT12 disk).
+   * Throws when the folder cannot be mounted; any previously mounted folder is
+   * replaced.
+   */
+  mountFolder(dir: string): void {
+    this.stop();
+    const rc: number = testNapi.mountFolder(dir);
+    if (rc !== 0) {
+      this.start();
+      throw new Error('mountFolder failed: ' + dir);
+    }
+    this.mountedFolder = dir;
+    this.start();
+  }
+
+  unmountFolder(): void {
+    this.stop();
+    testNapi.unmountFolder();
+    this.mountedFolder = '';
+    this.start();
+  }
+
+  isFolderMounted(): boolean {
+    return this.mountedFolder !== '';
   }
 
   stop(): void {

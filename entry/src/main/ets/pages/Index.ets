@@ -1,6 +1,8 @@
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { common } from '@kit.AbilityKit';
+import { BusinessError } from '@kit.BasicServicesKit';
 import { DosEmulator } from '../model/DosEmulator';
+import { MountFolder } from '../model/MountFolder';
 import { XtScanCodeMap } from '../model/XtScanCodeMap';
 import { EmulatorScreen } from '../view/EmulatorScreen';
 import { SoftKeyboard } from '../view/SoftKeyboard';
@@ -13,6 +15,8 @@ struct Index {
   @State booted: boolean = false;
   @State paused: boolean = false;
   @State keyboardVisible: boolean = true;
+  @State folderMounted: boolean = false;
+  @State mountBusy: boolean = false;
   private emu: DosEmulator = new DosEmulator();
   private autoPaused: boolean = false;
 
@@ -65,6 +69,37 @@ struct Index {
     this.emu.injectKey(XtScanCodeMap.buildKeyValue(sdl, alt, shift, ctrl, !down));
   }
 
+  private async handleMountButton(): Promise<void> {
+    if (this.mountBusy) {
+      return;
+    }
+    this.mountBusy = true;
+    try {
+      if (this.folderMounted) {
+        this.emu.unmountFolder();
+        this.folderMounted = false;
+        this.showToast('C: 目录已卸载');
+      } else {
+        const ctx = getContext(this) as common.UIAbilityContext;
+        const dir: string = await MountFolder.prepareMountDir(ctx);
+        MountFolder.verifyAccess(dir);
+        this.emu.mountFolder(dir);
+        this.folderMounted = true;
+        this.showToast('C: 已挂载 ' + dir);
+      }
+    } catch (error) {
+      const err = error as BusinessError;
+      this.showToast('挂载失败: ' + err.message);
+      hilog.error(0x0000, TAG, 'mount folder failed: %{public}s', err.message);
+    } finally {
+      this.mountBusy = false;
+    }
+  }
+
+  private showToast(message: string): void {
+    this.getUIContext().getPromptAction().showToast({ message: message });
+  }
+
   @Builder
   toolbarButton(label: string, action: () => void) {
     Button(label)
@@ -94,6 +129,9 @@ struct Index {
         })
         this.toolbarButton(this.keyboardVisible ? '收起键盘' : '显示键盘', () => {
           this.keyboardVisible = !this.keyboardVisible;
+        })
+        this.toolbarButton(this.folderMounted ? '卸载目录' : '挂载目录', () => {
+          this.handleMountButton();
         })
       }
       .width('100%')

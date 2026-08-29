@@ -9,6 +9,10 @@
  *   init(biosPath: string): void
  *   start(floppyPath: string): void
  *   stop(): void
+ *   mountImage(harddiskPath: string): number   // 0 ok, -1 fail (raw image as C:)
+ *   unmountImage(): void
+ *   mountFolder(dir: string): number           // 0 ok, -1 fail (folder as C:)
+ *   unmountFolder(): void
  *   reset(): void
  *   pause(): void
  *   resume(): void
@@ -84,6 +88,58 @@ static napi_value Stop(napi_env env, napi_callback_info info)
 {
     audio_stop();
     host_stop();
+    napi_value result;
+    napi_get_undefined(env, &result);
+    return result;
+}
+
+/* ---------- mountImage(harddiskPath) -> number (0 ok, -1 fail) ---------- */
+static napi_value MountImage(napi_env env, napi_callback_info info)
+{
+    size_t argc = 1;
+    napi_value args[1] = {nullptr};
+    napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
+
+    std::string path;
+    if (argc >= 1) {
+        getStringArg(env, args[0], path);
+    }
+    int rc = host_mount_image(path.empty() ? nullptr : path.c_str());
+
+    napi_value result;
+    napi_create_int32(env, rc, &result);
+    return result;
+}
+
+static napi_value UnmountImage(napi_env env, napi_callback_info info)
+{
+    host_unmount_image();
+    napi_value result;
+    napi_get_undefined(env, &result);
+    return result;
+}
+
+/* ---------- mountFolder(dir) -> number (0 ok, -1 fail) ---------- */
+static napi_value MountFolder(napi_env env, napi_callback_info info)
+{
+    size_t argc = 1;
+    napi_value args[1] = {nullptr};
+    napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
+
+    std::string dir;
+    if (argc >= 1) {
+        getStringArg(env, args[0], dir);
+    }
+    int rc = host_mount_vdisk(dir.empty() ? nullptr : dir.c_str());
+
+    napi_value result;
+    napi_create_int32(env, rc, &result);
+    return result;
+}
+
+static napi_value UnmountFolder(napi_env env, napi_callback_info info)
+{
+    host_unmount_vdisk();
     napi_value result;
     napi_get_undefined(env, &result);
     return result;
@@ -185,6 +241,10 @@ static napi_value ModuleInit(napi_env env, napi_value exports)
         { "init", nullptr, Init, nullptr, nullptr, nullptr, napi_default, nullptr },
         { "start", nullptr, Start, nullptr, nullptr, nullptr, napi_default, nullptr },
         { "stop", nullptr, Stop, nullptr, nullptr, nullptr, napi_default, nullptr },
+        { "mountImage", nullptr, MountImage, nullptr, nullptr, nullptr, napi_default, nullptr },
+        { "unmountImage", nullptr, UnmountImage, nullptr, nullptr, nullptr, napi_default, nullptr },
+        { "mountFolder", nullptr, MountFolder, nullptr, nullptr, nullptr, napi_default, nullptr },
+        { "unmountFolder", nullptr, UnmountFolder, nullptr, nullptr, nullptr, napi_default, nullptr },
         { "reset", nullptr, Reset, nullptr, nullptr, nullptr, napi_default, nullptr },
         { "pause", nullptr, Pause, nullptr, nullptr, nullptr, napi_default, nullptr },
         { "resume", nullptr, Resume, nullptr, nullptr, nullptr, napi_default, nullptr },
