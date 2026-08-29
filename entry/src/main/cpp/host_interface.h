@@ -40,9 +40,13 @@ void host_video_frame(const unsigned char *gfx8, int w, int h);
  * HOST_CTL_RESET tells the core to reload the BIOS and restart execution. */
 int host_control(void);
 
-/* --- entry point into the 8086tiny core (runs on the host emulator thread) --- */
+/* --- entry point into the 8086tiny core (runs on the host emulator thread) ---
+ * When vdisk_dir is non-null the core mounts that host folder as the emulated
+ * C: drive (a synthesized FAT12 disk; see vdisk.h); harddisk_path is ignored in
+ * that case. When vdisk_dir is null, harddisk_path is opened as a raw disk image
+ * for C: (also passing null for both keeps only the floppy A:). */
 int emulator_run(const char *bios_path, const char *floppy_path,
-                 const char *harddisk_path);
+                 const char *harddisk_path, const char *vdisk_dir);
 
 /* --- called by the NAPI bridge / audio output (host layer) --- */
 
@@ -58,6 +62,18 @@ void host_reset(void);
 void host_pause(void);
 void host_resume(void);
 void host_inject_key(unsigned int value);
+
+/* Mount a raw hard disk image file as the emulated C: drive.
+ * Returns 0 on success or -1 on failure. Must be called while the emulator
+ * thread is stopped (i.e. not between host_start() and host_stop()). */
+int  host_mount_image(const char *harddisk_path);
+void host_unmount_image(void);
+
+/* Mount a host folder as the emulated C: drive (synthesized FAT12 disk).
+ * Returns 0 if the folder was accepted, -1 otherwise. Must be called while
+ * the emulator thread is stopped. */
+int  host_mount_vdisk(const char *dir);
+void host_unmount_vdisk(void);
 
 /* Copies the current BGRA frame into the caller-provided buffer.
  * Returns 0 on success; on failure the width and height are set to 0. */

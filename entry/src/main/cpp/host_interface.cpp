@@ -9,6 +9,7 @@
  *  - Frame buffer + sequence counter shared with the NAPI bridge
  */
 #include "host_interface.h"
+#include "vdisk.h"
 #include "third_party/8086tiny/font8x8_cp437.h"
 
 #include <thread>
@@ -312,6 +313,8 @@ static std::atomic<bool> g_reset_requested(false);
 
 static std::string g_bios_path;
 static std::string g_floppy_path;
+static std::string g_harddisk_path;
+static std::string g_vdisk_path;
 static std::thread g_emu_thread;
 
 /* Speed governor state (reset on start/reset). */
@@ -489,7 +492,9 @@ extern "C" int host_control(void) {
 /* ------------------------------------------------------------------ */
 
 static void emulatorThreadMain() {
-    emulator_run(g_bios_path.c_str(), g_floppy_path.c_str(), nullptr);
+    emulator_run(g_bios_path.c_str(), g_floppy_path.c_str(),
+                 g_harddisk_path.empty() ? nullptr : g_harddisk_path.c_str(),
+                 g_vdisk_path.empty() ? nullptr : g_vdisk_path.c_str());
 }
 
 /* ------------------------------------------------------------------ */
@@ -540,6 +545,45 @@ extern "C" void host_stop(void) {
         g_emu_thread.join();
     g_running.store(false, std::memory_order_release);
     g_paused.store(false, std::memory_order_release);
+}
+
+/* Mounting changes which paths the next emulator_run() call opens, so it must
+ * happen while the emulator thread is stopped; host_start() picks the values
+ * up when it spawns the thread. */
+
+extern "C" int host_mount_image(const char *harddisk_path) {
+    if (g_running.load(std::memory_order_acquire))
+        return -1;
+    std::lock_guard<std::mutex> lock(g_mtx);
+    g_harddisk_path = harddisk_path ? harddisk_path : "";
+    g_vdisk_path.clear();
+    return 0;
+}
+
+extern "C" void host_unmount_image(void) {
+    std::lock_guard<std::mutex> lock(g_mtx);
+    g_harddisk_path.clear();
+}
+
+extern "C" int host_mount_vdisk(const char *dir) {
+    if (g_running.load(std::memory_order_acquire))
+        return -1;
+    if (!dir || !dir[0])
+        return -1;
+    /* Validate the folder through the vdisk module before committing, so a
+     * bad path or an over-capacity folder is rejected here rather than inside
+     * the emulator thread. */
+    if (vdisk_validate(dir) != 0)
+        return -1;
+    std::lock_guard<std::mutex> lock(g_mtx);
+    g_vdisk_path = dir;
+    g_harddisk_path.clear();
+    return 0;
+}
+
+extern "C" void host_unmount_vdisk(void) {
+    std::lock_guard<std::mutex> lock(g_mtx);
+    g_vdisk_path.clear();
 }
 
 extern "C" void host_reset(void) {
