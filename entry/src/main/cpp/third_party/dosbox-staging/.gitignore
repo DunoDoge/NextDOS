@@ -1,0 +1,105 @@
+# Precompiled Headers
+*.gch
+*.pch
+
+# Other
+compile
+documentation
+build.log
+clean.log
+make.log
+.previous_build
+.current_build
+*.defines
+missed.txt
+
+# Default CMake build dir
+/build
+
+# VCPKG
+vcpkg_installed
+
+# Visual Studio / Code
+.vs
+.vscode
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+*.code-workspace
+
+# IntelliJ
+.idea
+*.iml
+
+# Local History for Visual Studio Code
+.history/
+
+# GNU Global tags, used by some VSCode/Codium plugins
+GPATH
+GRTAGS
+GTAGS
+
+# Common editor temp/backup files
+*~
+*.swp
+*.tmp
+*.orig
+*.rej
+
+# PVS static analysis outputs or ephemerals
+pvs-*
+!pvs-studio.yml
+strace_out
+suppress_base.json
+.PVS-Studio
+
+# macOS directory prefs
+.DS_Store
+
+# Profiling data
+*.prof
+*.profraw
+*.profraw.imports
+*.afdo
+*.afdo.imports
+
+# Intel optimization reports
+*.optrpt
+
+# clangd language server
+.clangd
+.cache
+compile_commands.json
+
+tools/find_magical_f_code
+tools/find_magical_f_code.exe
+tools/is_magical_asset
+tools/is_magical_asset.exe
+tools/superanalyze_mpeg_ps
+tools/superanalyze_mpeg_ps.exe
+tools/unlock_the_magic_mpeg_ps
+tools/unlock_the_magic_mpeg_ps.exe
+
+# Debian build artifacts
+obj-*.-linux-gnu
+debian
+
+# CMake
+CMakeUserPresets.json
+cmake-build-*/
+
+# External deps for symlinking for local dev
+/lib
+
+# Tests
+/Testing
+
+# VS Code CMake Tools test discovery cache
+cmake_test_discovery_*.json
+
+# Python
+__pycache__
+
+# Zed text editor
+.zed

@@ -1,0 +1,38 @@
+{
+  "$schema": "https://raw.githubusercontent.com/microsoft/vcpkg-tool/main/docs/vcpkg.schema.json",
+  "name": "dosbox-staging",
+  "description": "DOSBox Staging is a modern continuation of DOSBox with advanced features and current development practices.",
+  "version": "0.84.0-alpha",
+  "dependencies": [
+    "asio",
+    "gtest",
+    "iir1",
+    "libmt32emu",
+    "libpng",
+    "opusfile",
+    "fluidsynth",
+    {
+      "name": "sdl3",
+      "platform": "linux",
+      "features": [
+        "alsa",
+        "ibus",
+        "vulkan",
+        "wayland",
+        "x11"
+      ]
+    },
+    {
+      "name": "sdl3",
+      "platform": "!linux"
+    },
+    "sdl3-image",
+    "speexdsp",
+    "zlib-ng",
+    {
+      "name": "pkgconf",
+      "host": true
+    }
+  ],
+  "builtin-baseline": "9e593bb18ea69cc5095e012465dcd675a822ed0d"
+}

@@ -5,19 +5,19 @@ import { common } from '@kit.AbilityKit';
 import { fileIo as fs } from '@kit.CoreFileKit';
 
 const TAG: string = 'NextDOS';
-const FRAME_INTERVAL_MS: number = 33;
+const FRAME_INTERVAL_MS: number = 16;
 
 /**
- * High-level DOS emulator controller. Wraps the native libentry.so module:
- * bootstraps the BIOS/floppy assets into the app sandbox, drives the frame
- * loop, and forwards key events to the emulated keyboard.
+ * High-level DOS emulator controller on top of the DOSBox Staging embed
+ * layer. Generates the dosbox config file ([autoexec] mounts the C: drive),
+ * spawns the native emulator thread, drives the frame loop, and forwards
+ * key/mouse events.
  */
 export class DosEmulator {
   onFrame: (frame: FrameInfo) => void = (frame: FrameInfo): void => {
   };
 
-  private biosPath: string = '';
-  private floppyPath: string = '';
+  private confPath: string = '';
   private mountedFolder: string = '';
   private timerId: number = -1;
   private lastSeq: number = 0;
@@ -25,14 +25,16 @@ export class DosEmulator {
   private paused: boolean = false;
   private tickCount: number = 0;
 
-  /** First-run: copy bios/fd.img from rawfile into the sandbox and init the core. */
+  /** First-run: copy the boot floppy image into the sandbox and write the config.
+   * The DOSBox resource tree is deployed natively from rawfile (see
+   * ohos_resources.cpp). */
   async bootstrap(ctx: common.UIAbilityContext): Promise<void> {
-    await this.copyRawFile(ctx, 'bios');
     await this.copyRawFile(ctx, 'fd.img');
-    this.biosPath = ctx.filesDir + '/bios';
-    this.floppyPath = ctx.filesDir + '/fd.img';
-    testNapi.init(this.biosPath);
-    hilog.info(0x0000, TAG, 'emulator initialized: %{public}s', this.biosPath);
+    this.confPath = ctx.filesDir + '/dosbox.conf';
+    this.writeConfig();
+    testNapi.initResources(ctx.resourceManager);
+    testNapi.init(this.confPath);
+    hilog.info(0x0000, TAG, 'emulator initialized: %{public}s', this.confPath);
   }
 
   private async copyRawFile(ctx: common.UIAbilityContext, name: string): Promise<void> {
@@ -44,47 +46,66 @@ export class DosEmulator {
     hilog.info(0x0000, TAG, 'copied rawfile %{public}s to sandbox', name);
   }
 
+  /** Regenerates the dosbox config; the C: mount lives in [autoexec]. */
+  private writeConfig(): void {
+    let conf = '[sdl]\n';
+    conf += 'presentation_mode = dos-rate\n';
+    conf += 'vsync = off\n';
+    conf += 'fullscreen = off\n';
+    conf += '\n';
+    conf += '[cpu]\n';
+    conf += 'cycles = max\n';
+    conf += '\n';
+    conf += '[autoexec]\n';
+    if (this.mountedFolder !== '') {
+      conf += 'mount c ' + this.mountedFolder + '\n';
+      conf += 'c:\n';
+    }
+    conf += '\n';
+    const file = fs.openSync(this.confPath, fs.OpenMode.READ_WRITE | fs.OpenMode.CREATE | fs.OpenMode.TRUNC);
+    fs.writeSync(file.fd, conf);
+    fs.closeSync(file);
+  }
+
+  /** Spawns the emulator thread. Must not be called while already running. */
   start(): void {
     if (this.running) {
       return;
     }
-    testNapi.start(this.floppyPath);
+    testNapi.start(this.confPath);
     this.running = true;
     this.paused = false;
   }
 
   /**
-   * Mounts a raw hard disk image as the emulated C: drive. The emulator thread
-   * is restarted so the core re-opens the disk, so a running session is
-   * stopped and started again.
-   */
-  mountImage(path: string): void {
-    this.stop();
-    testNapi.mountImage(path);
-    this.start();
-  }
-
-  /**
-   * Mounts a host folder as the emulated C: drive (virtual FAT12 disk).
-   * Throws when the folder cannot be mounted; any previously mounted folder is
-   * replaced.
+   * Mounts a host folder as the emulated C: drive. The config file is
+   * regenerated with the new [autoexec] mount and the emulator is restarted
+   * (stop -> writeConfig -> start), matching the native re-init flow.
    */
   mountFolder(dir: string): void {
-    this.stop();
-    const rc: number = testNapi.mountFolder(dir);
-    if (rc !== 0) {
-      this.start();
-      throw new Error('mountFolder failed: ' + dir);
+    const wasRunning: boolean = this.running;
+    if (wasRunning) {
+      this.stop();
     }
     this.mountedFolder = dir;
-    this.start();
+    this.writeConfig();
+    testNapi.mountFolder(dir);
+    if (wasRunning) {
+      this.start();
+    }
   }
 
   unmountFolder(): void {
-    this.stop();
-    testNapi.unmountFolder();
+    const wasRunning: boolean = this.running;
+    if (wasRunning) {
+      this.stop();
+    }
     this.mountedFolder = '';
-    this.start();
+    this.writeConfig();
+    testNapi.unmountFolder();
+    if (wasRunning) {
+      this.start();
+    }
   }
 
   isFolderMounted(): boolean {
@@ -100,6 +121,7 @@ export class DosEmulator {
     this.paused = false;
   }
 
+  /** Full re-initialization of all DOSBox modules with the same config. */
   reset(): void {
     testNapi.reset();
     this.running = true;
@@ -124,9 +146,18 @@ export class DosEmulator {
     }
   }
 
-  injectKey(value: number): void {
+  /** Injects a HarmonyOS key event; unknown codes are dropped natively. */
+  injectKey(keyCode: number, down: boolean): void {
     if (this.running) {
-      testNapi.injectKey(value);
+      testNapi.injectKey(keyCode, down);
+    }
+  }
+
+  /** action: 0=move, 1=button, 2=wheel (see Index.d.ts). */
+  injectMouse(action: number, button: number, x: number, y: number,
+    relX: number, relY: number): void {
+    if (this.running) {
+      testNapi.injectMouse(action, button, x, y, relX, relY);
     }
   }
 
@@ -155,7 +186,11 @@ export class DosEmulator {
       this.lastSeq = frame.seq;
       this.onFrame(frame);
       this.tickCount++;
-      if (this.tickCount % 30 === 0) {
+      if (this.tickCount % 600 === 0) {
+        hilog.info(0x0000, TAG, 'tick seq=%{public}d w=%{public}d h=%{public}d mode=%{public}d bytes=%{public}d',
+          frame.seq, frame.width, frame.height, frame.mode, frame.buffer.byteLength);
+      }
+      if (this.tickCount % 600 === 0) {
         hilog.info(0x0000, TAG, 'tick seq=%{public}d w=%{public}d h=%{public}d mode=%{public}d',
           frame.seq, frame.width, frame.height, frame.mode);
       }

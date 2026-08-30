@@ -1,0 +1,321 @@
+name: Linux builds
+permissions: read-all
+
+on:
+  push:
+    paths-ignore:
+      - '.clang-format'
+      - '.mdl-styles'
+      - '*.md'
+      - 'docs/**'
+      - 'licenses/**'
+      - 'website/**'
+
+  pull_request:
+    paths-ignore:
+      - '.clang-format'
+      - '.mdl-styles'
+      - '*.md'
+      - 'docs/**'
+      - 'licenses/**'
+      - 'website/**'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  generate_release_notes:
+    name:    Generate release notes
+    runs-on: ubuntu-slim
+    if:      github.event_name == 'push' || github.event.pull_request.head.repo.full_name != github.repository
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+        with:
+          submodules: false
+
+      - name: Set common vars
+        uses: ./.github/actions/set-common-vars
+
+      - name: Generate release notes HTML
+        uses: ./.github/actions/generate-release-notes
+        with:
+          output_path: release-notes.html
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          git_hash: ${{ github.sha }}
+
+      - name: Upload release notes artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-notes-html
+          path: release-notes.html
+          retention-days: 1
+
+  build_linux:
+    name:    ${{ matrix.conf.name }} ${{ matrix.arch }}
+    runs-on: ${{ matrix.conf.os }}${{ matrix.arch == 'arm64' && '-arm' || '' }}
+    if:      github.event_name == 'push' || github.event.pull_request.head.repo.full_name != github.repository
+    strategy:
+      matrix:
+#       TODO enable arm64 builds
+#        arch: [x64, arm64]
+        arch: [x64]
+        conf:
+          - name: GCC 13, Ubuntu 24.04
+            os: ubuntu-24.04
+            cmake_preset: release-linux-vcpkg
+            cc:  gcc
+            cxx: g++
+            compiler_version: "13"
+            max_warnings: 0
+
+          - name: GCC 14, Ubuntu 24.04
+            os: ubuntu-24.04
+            cmake_preset: release-linux-vcpkg
+            cc:  gcc
+            cxx: g++
+            compiler_version: "14"
+            max_warnings: 0
+
+          - name: GCC 15, Ubuntu 24.04
+            os: ubuntu-24.04
+            cmake_preset: release-linux-vcpkg
+            cc:  gcc
+            cxx: g++
+            compiler_version: "15"
+            gcc_ppa: ppa:ubuntu-toolchain-r/test
+            max_warnings: 0
+
+          - name: Clang 18, Ubuntu 24.04
+            os: ubuntu-24.04
+            cmake_preset: release-linux-vcpkg
+            cc:  clang
+            cxx: clang++
+            compiler_version: "18"
+            max_warnings: 0
+
+          - name: GCC 13, Ubuntu 24.04, debugger build
+            os: ubuntu-24.04
+            cmake_preset: debug-linux-vcpkg
+            cmake_flags: -DOPT_DEBUGGER=ON -DOPT_HEAVY_DEBUGGER=ON
+            cc:  gcc
+            cxx: g++
+            compiler_version: "13"
+            max_warnings: 0
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          submodules: false
+
+      - name: Set common vars
+        uses: ./.github/actions/set-common-vars
+
+      - name: Set up CMake
+        uses: lukka/get-cmake@fffaaafeea488556c2c12dad60690008bc1caacb # v4.4.2
+
+      - name: Load apt package list
+        id:   apt_pkgs
+        run:  echo "list=$(tr '\n' ' ' < extras/linux/ubuntu-24.04-packages.txt)" >> "$GITHUB_OUTPUT"
+
+      # See linting.yml for notes on this action.
+      - name: Install apt dependencies
+        id:   apt_cache
+        uses: awalsh128/cache-apt-pkgs-action@681749ae568c81c2037cb9185e38b709b261bd2f # v1.6.1
+        with:
+          packages: ${{ steps.apt_pkgs.outputs.list }}
+          version:  "1.0"
+
+      - name: Install GCC ${{ matrix.conf.compiler_version }} and switch alternative
+        if: ${{ matrix.conf.cc == 'gcc' && matrix.conf.compiler_version != '13' }}
+        run: |
+          set -xeu
+          export DEBIAN_FRONTEND=noninteractive
+
+          if [ -n "${{ matrix.conf.gcc_ppa }}" ]; then
+            sudo add-apt-repository -y "${{ matrix.conf.gcc_ppa }}"
+            sudo apt-get update
+          fi
+
+          ver="${{ matrix.conf.compiler_version }}"
+          sudo apt-get install -y "gcc-${ver}" "g++-${ver}"
+
+          sudo update-alternatives --install /usr/bin/gcc gcc "/usr/bin/gcc-${ver}" 100 \
+            --slave /usr/bin/g++ g++ "/usr/bin/g++-${ver}"
+
+          sudo update-alternatives --set gcc "/usr/bin/gcc-${ver}"
+          gcc --version
+          g++ --version
+
+
+      - name: Report apt cache status
+        run:  echo "apt cache hit:" "${{ steps.apt_cache.outputs.cache-hit || 'false' }}"
+
+      - name: Set up vcpkg
+        uses: ./.github/actions/setup-vcpkg
+        with:
+          name_os: linux
+          arch: "${{ matrix.arch }}"
+          compiler: "${{ matrix.conf.cc }}"
+          compiler_version: "${{ matrix.conf.compiler_version }}"
+
+      - name: Log environment
+        run: ./scripts/ci/log-env.sh
+
+      # Retried because the docs build (OPT_DOCUMENTATION=ON) downloads
+      # external assets via the MkDocs Material privacy plugin; a transient
+      # 5xx or DNS hiccup on any source crashes the whole build. Wrapping
+      # the entire step keeps the change minimal; the cmake build is
+      # incremental, so a docs-flake retry skips already-compiled artifacts.
+      - name: Build
+        env:
+          CC:  ${{ matrix.conf.cc }}
+          CXX: ${{ matrix.conf.cxx }}
+        uses: ./.github/actions/retry
+        with:
+          cmd: |
+            set -xeo pipefail
+            cmake ${{ matrix.conf.cmake_flags }} -DOPT_DOCUMENTATION=ON --preset ${{ matrix.conf.cmake_preset }}
+            cmake --build --preset ${{ matrix.conf.cmake_preset }} 2>&1 | tee build.log
+
+      - name: Run tests
+        run: |
+          set -xo pipefail
+          ctest -j 4 --preset ${{ matrix.conf.cmake_preset }} 2>&1 | tee tests.log
+
+      - name: Summarize warnings
+        env:
+          MAX_WARNINGS: ${{ matrix.conf.max_warnings }}
+        run:  ./scripts/ci/count-warnings.py -lf build.log
+
+
+  build_linux_release:
+    name:    Release build
+    runs-on: ubuntu-24.04
+    needs:   generate_release_notes
+    if:      github.event_name == 'push' || github.event.pull_request.head.repo.full_name != github.repository
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+        with:
+          submodules: false
+
+      - name: Set common vars
+        uses: ./.github/actions/set-common-vars
+
+      - name: Set up CMake
+        uses: lukka/get-cmake@fffaaafeea488556c2c12dad60690008bc1caacb # v4.4.2
+
+      - name: Load apt package list
+        id:   apt_pkgs
+        run:  echo "list=$(tr '\n' ' ' < extras/linux/ubuntu-24.04-packages.txt)" >> "$GITHUB_OUTPUT"
+
+      # See linting.yml for notes on this action.
+      - name: Install apt dependencies
+        id:   apt_cache
+        uses: awalsh128/cache-apt-pkgs-action@681749ae568c81c2037cb9185e38b709b261bd2f # v1.6.1
+        with:
+          packages: ${{ steps.apt_pkgs.outputs.list }}
+          version:  "1.0"
+
+      - name: Report apt cache status
+        run:  echo "apt cache hit:" "${{ steps.apt_cache.outputs.cache-hit || 'false' }}"
+
+      - name: Set up vcpkg
+        uses: ./.github/actions/setup-vcpkg
+        with:
+          name_os: linux
+          arch: "x64"
+          compiler: "gcc"
+
+      - name: Log environment
+        run: ./scripts/ci/log-env.sh
+
+      # Retried because the docs build (OPT_DOCUMENTATION=ON) downloads
+      # external assets via the MkDocs Material privacy plugin; a transient
+      # 5xx or DNS hiccup on any source crashes the whole build. Wrapping
+      # the entire step keeps the change minimal; the cmake build is
+      # incremental, so a docs-flake retry skips already-compiled artifacts.
+      - name: Build release
+        uses: ./.github/actions/retry
+        with:
+          cmd: |
+            set -xe
+            cmake -DOPT_DOCUMENTATION=ON --preset release-linux-vcpkg
+            cmake --build --preset release-linux-vcpkg
+
+      - name: Dump workspace contents
+        run: find $RUNNER_WORKSPACE
+
+      - name: Verify executable RPATH
+        run: |
+          set -x
+          objdump -x build/release-linux/dosbox | grep \$ORIGIN/lib
+
+      - name: Package
+        run: |
+          echo "*** dosbox transitive deps:"
+          ldd build/release-linux/dosbox
+
+          ./scripts/packaging/create-package.sh \
+              -p linux \
+              build/release-linux \
+              "dosbox-staging-linux-x86_64-$DOSBOX_VERSION_AND_HASH"
+
+
+      - name: Inject external vcpkg dependencies
+        run: |
+          set -x
+          ZIP_NAME=dosbox-vcpkg-deps-linux-x86_64.zip
+
+          # Retry on transient GitHub release-asset CDN flakes.
+          wget -nv --tries=5 --waitretry=10 --retry-connrefused \
+            https://github.com/dosbox-staging/dosbox-staging-ext/releases/download/$VCPKG_EXT_DEPS_VERSION/$ZIP_NAME
+          unzip $ZIP_NAME -d vcpkg-deps
+
+          LIB_DIR="dosbox-staging-linux-x86_64-$DOSBOX_VERSION_AND_HASH/lib"
+          mkdir $LIB_DIR
+          cp vcpkg-deps/release/* $LIB_DIR
+
+
+      - name:  Inject Nuked-SC55-CLAP plugin
+        run: |
+          set -x
+          ZIP_NAME=Nuked-SC55-CLAP-linux-x86_64-$NUKED_SC55_CLAP_VERSION.zip
+
+          # Retry on transient GitHub release-asset CDN flakes.
+          curl -fL --retry 5 --retry-all-errors --retry-delay 10 \
+            https://github.com/johnnovak/Nuked-SC55-CLAP/releases/download/$NUKED_SC55_CLAP_VERSION/$ZIP_NAME -o $ZIP_NAME
+          unzip $ZIP_NAME -d nuked-sc55-clap
+
+          PLUGINS_DIR="dosbox-staging-linux-x86_64-$DOSBOX_VERSION_AND_HASH/plugins"
+          mkdir $PLUGINS_DIR
+          cp nuked-sc55-clap/* $PLUGINS_DIR
+
+      - name: Download release notes HTML
+        uses: actions/download-artifact@v8
+        with:
+          name: release-notes-html
+          path: "dosbox-staging-linux-x86_64-${{ env.DOSBOX_VERSION_AND_HASH }}"
+
+      - name: Create tarball
+        # Upload tarball instead of a zip file to preserve file attributes
+        run: |
+          tar -cJf "dosbox-staging-linux-x86_64-$DOSBOX_VERSION_AND_HASH.tar.xz" \
+              "dosbox-staging-linux-x86_64-$DOSBOX_VERSION_AND_HASH"
+
+      - name: Upload tarball
+        uses: actions/upload-artifact@v7
+        with:
+          name: dosbox-staging-linux-x86_64-${{ env.DOSBOX_VERSION_AND_HASH }}.tar.xz
+          path: dosbox-staging-linux-x86_64-${{ env.DOSBOX_VERSION_AND_HASH }}.tar.xz
+          archive: false
+
+      - name:  Report repo cache usage
+        if:    always()
+        shell: bash
+        run:   gh cache list --limit 50 --sort size_in_bytes --order desc
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

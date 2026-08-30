@@ -1,3 +1,4 @@
+import type resourceManager from '@ohos.resourceManager';
 export interface FrameInfo {
   seq: number;
   width: number;
@@ -11,18 +12,24 @@ export interface EmulatorStatus {
   paused: boolean;
 }
 
-export const init: (biosPath: string) => void;
-export const start: (floppyPath: string) => void;
+export const init: (configPath: string) => void;
+/** Passes the JS resource manager; must be called before start(). */
+export const initResources: (resourceMgr: resourceManager.ResourceManager) => void;
+export const start: (configPath: string) => void;
 export const stop: () => void;
-/** Mounts a raw hard disk image as the emulated C: drive. Returns 0 on success, -1 on failure. Must be called while the emulator is stopped. */
+/** Not wired in the DOSBox embed layer (use the [autoexec] imgmount section). Always returns -1. */
 export const mountImage: (harddiskPath: string) => number;
 export const unmountImage: () => void;
-/** Mounts a host folder as the emulated C: drive (virtual FAT12 disk). Returns 0 on success, -1 on failure. Must be called while the emulator is stopped. */
+/** The host folder is mounted via the generated config's [autoexec] 'mount c' line. Always returns 0. */
 export const mountFolder: (dir: string) => number;
 export const unmountFolder: () => void;
+/** Full re-initialization: stops the emulator and boots it again with the same config. */
 export const reset: () => void;
 export const pause: () => void;
 export const resume: () => void;
-export const injectKey: (value: number) => void;
+/** Injects a HarmonyOS key event: @ohos.multimodalInput.keyCode value + key-down flag. */
+export const injectKey: (keyCode: number, down: boolean) => void;
+/** action: 0=move, 1=button (1/2/3 down, +4 up), 2=wheel. x/y in frame pixel space; relX/relY deltas. */
+export const injectMouse: (action: number, button: number, x: number, y: number, relX: number, relY: number) => void;
 export const getFrame: () => FrameInfo;
 export const getStatus: () => EmulatorStatus;

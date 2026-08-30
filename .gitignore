@@ -14,3 +14,8 @@ build-profile.json5
 /.mimosa
 /.vscode
 /.zcode
+.native-build-arm64/
+.native-build-x86_64/
+.native-x64-*.log
+.entry/src/main/cpp/.hvigor/
+entry/src/main/cpp/.hvigor/

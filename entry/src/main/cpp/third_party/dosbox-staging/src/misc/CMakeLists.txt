@@ -1,0 +1,63 @@
+target_sources(dosboxcommon PRIVATE
+  ansi_code_markup.cpp
+  console.cpp
+  cross.cpp
+  dos_rwops.cpp
+  fs_utils.cpp
+  help_util.cpp
+  host_locale.cpp
+  image_decoder.cpp
+  iso_locale_codes.cpp
+  messages_adjust.cpp
+  messages_po_entry.cpp
+  rwqueue.cpp
+  support.cpp
+  unicode.cpp
+  unicode_encodings.cpp
+  video.cpp
+)
+
+if (DOSBOX_PLATFORM_WINDOWS)
+  # Windows-only filesystem helpers and locale detection
+  target_sources(dosboxcommon PRIVATE
+    fs_utils_win32.cpp
+    host_locale_win32.cpp
+  )
+  # Shlwapi needed for PathFileExistsW
+  target_link_libraries(dosboxcommon PRIVATE Shlwapi)
+
+elseif (DOSBOX_PLATFORM_MACOS)
+  # Linux & macOS-only filesystem helpers
+  target_sources(dosboxcommon PRIVATE fs_utils_posix.cpp)
+
+  # macOS-only locale detection
+  target_sources(dosboxcommon PRIVATE host_locale_macos.cpp)
+
+elseif (DOSBOX_PLATFORM_LINUX)
+  # Linux & macOS-only filesystem helpers
+  target_sources(dosboxcommon PRIVATE fs_utils_posix.cpp)
+
+  # Linux-only locale detection
+  target_sources(dosboxcommon PRIVATE host_locale_linux.cpp)
+
+elseif (DOSBOX_PLATFORM_OHOS)
+  # OHOS is a generic POSIX (musl) platform; environment-variable based
+  # locale detection works there as well
+  target_sources(dosboxcommon PRIVATE fs_utils_posix.cpp)
+  target_sources(dosboxcommon PRIVATE host_locale_linux.cpp)
+endif()
+
+if (DOSBOX_OHOS_EMBED)
+  # No host executable; messages.cpp is part of the embeddable library
+  target_sources(dosboxcommon PRIVATE messages.cpp)
+else()
+  target_sources(dosbox PRIVATE messages.cpp)
+endif()
+
+if (OPT_TESTS)
+  target_sources(dosbox_tests PRIVATE messages_stubs.cpp)
+endif()
+
+target_include_directories(dosboxcommon SYSTEM PRIVATE ../libs/include)
+target_link_libraries(dosboxcommon PRIVATE whereami)
+
