@@ -1,0 +1,260 @@
+// SPDX-FileCopyrightText:  2002-2025 The DOSBox Team
+// SPDX-License-Identifier: GPL-2.0-or-later
+
+#ifndef DOSBOX_SERIALMODEM_H
+#define DOSBOX_SERIALMODEM_H
+
+#include "dosbox.h"
+
+#include <vector>
+#include <memory>
+
+#include "serialport.h"
+#include "misc_util.h"
+
+#define SREGS 100
+
+//If it's too high you overflow terminal clients buffers i think
+#define MODEM_BUFFER_QUEUE_SIZE 1024
+
+#define MODEM_DEFAULT_PORT 23
+
+#define MODEM_TX_EVENT SERIAL_BASE_EVENT_COUNT + 1
+#define MODEM_RX_POLLING SERIAL_BASE_EVENT_COUNT + 2
+#define MODEM_RING_EVENT SERIAL_BASE_EVENT_COUNT + 3
+#define SERIAL_MODEM_EVENT_COUNT SERIAL_BASE_EVENT_COUNT+3
+
+#define MODEM_TICKRATE 1000 // Ticks per second
+#define MODEM_TICKTIME (1000 / MODEM_TICKRATE) // Tick interval in milliseconds
+#define MODEM_RINGINTERVAL (3000 / MODEM_TICKTIME)
+#define MODEM_WARMUP_DELAY_MS (250 / MODEM_TICKTIME)
+
+
+enum ResTypes {
+	ResNONE,
+	ResOK,
+	ResERROR,
+	ResCONNECT,
+	ResRING,
+	ResBUSY,
+	ResNODIALTONE,
+	ResNOCARRIER,
+	ResNOANSWER
+};
+
+#define TEL_CLIENT 0
+#define TEL_SERVER 1
+
+bool MODEM_ReadPhonebook(const std_fs::path &path);
+void MODEM_ClearPhonebook();
+
+class CFifo {
+public:
+	CFifo(const size_t n) : data(n), size(n) {}
+
+	uint32_t left() const { return size - used; }
+	uint32_t inuse() const { return used; }
+	void clear()
+	{
+		used = 0;
+		pos = 0;
+	}
+
+	void addb(uint8_t val)
+	{
+		if (used >= size) {
+			static uint16_t lcount = 0;
+			if (lcount < 1000) {
+				lcount++;
+				LOG_MSG("MODEM: FIFO Overflow! (addb)");
+			}
+			return;
+		}
+		//assert(used<size);
+		size_t where = pos + used;
+		if (where >= size)
+			where -= size;
+		data[where] = val;
+		//LOG_MSG("+%x", val);
+		used++;
+	}
+
+	void adds(const uint8_t *str, size_t len)
+	{
+		if ((used + len) > size) {
+			static uint16_t lcount = 0;
+			if (lcount < 1000) {
+				lcount++;
+				LOG_MSG("MODEM: FIFO Overflow! (adds len %u)",
+				        static_cast<unsigned>(len));
+			}
+			return;
+		}
+
+		//assert((used + len) <= size);
+		size_t where = pos + used;
+		used += len;
+		while (len--) {
+			if (where >= size)
+				where -= size;
+			//LOG_MSG("+'%x'", *str);
+			data[where++] = *str++;
+		}
+	}
+
+	uint8_t getb()
+	{
+		if (!used) {
+			static uint16_t lcount = 0;
+			if (lcount < 1000) {
+				lcount++;
+				LOG_MSG("MODEM: FIFO UNDERFLOW! (getb)");
+			}
+			return data[pos];
+		}
+		const size_t where = pos;
+		if (++pos >= size)
+			pos -= size;
+		used--;
+		//LOG_MSG("-%x",data[where]);
+		return data[where];
+	}
+
+	void gets(uint8_t *str, size_t len)
+	{
+		if (!used) {
+			static uint16_t lcount = 0;
+			if (lcount < 1000) {
+				lcount++;
+				LOG_MSG("MODEM: FIFO UNDERFLOW! (gets len %u)",
+				        static_cast<unsigned>(len));
+			}
+			return;
+		}
+		// assert(used >= len);
+		used -= len;
+		while (len--) {
+			//LOG_MSG("-%x", data[pos]);
+			*str++ = data[pos];
+			if (++pos >= size)
+				pos -= size;
+		}
+	}
+
+private:
+	std::vector<uint8_t> data;
+	size_t size = 0;
+	size_t pos = 0;
+	size_t used = 0;
+};
+#define MREG_AUTOANSWER_COUNT 0
+#define MREG_RING_COUNT 1
+#define MREG_ESCAPE_CHAR 2
+#define MREG_CR_CHAR 3
+#define MREG_LF_CHAR 4
+#define MREG_BACKSPACE_CHAR 5
+#define MREG_GUARD_TIME 12
+#define MREG_DTR_DELAY 25
+
+
+class CSerialModem final : public CSerial {
+public:
+	CSerialModem(const uint8_t port_idx, CommandLine *cmd);
+	~CSerialModem() override;
+	void Reset();
+
+	void SendLine(const char *line);
+	void SendRes(const ResTypes response);
+	void SendNumber(uint32_t val);
+
+	void EnterIdleState();
+	void EnterConnectedState();
+	bool Dial(const char *host);
+	void AcceptIncomingCall();
+	uint32_t ScanNumber(char *&scan) const;
+	char GetChar(char * & scan) const;
+	void SetModemSpeed(const uint32_t cfg_val);
+	void UpdateConnectString();
+
+	void DoCommand();
+
+	// void MC_Changed(uint32_t new_mc);
+
+	void TelnetEmulation(uint8_t *data, uint32_t size);
+
+	void Echo(uint8_t ch);
+	void Timer2();
+	void handleUpperEvent(uint16_t type) override;
+
+	void RXBufferEmpty();
+
+	void transmitByte(uint8_t val, bool first) override;
+	void updatePortConfig(uint16_t divider, uint8_t lcr) override;
+	void updateMSR() override;
+
+	void setBreak(bool) override;
+
+	void setRTSDTR(bool rts, bool dtr) override;
+	void setRTS(bool val) override;
+	void setDTR(bool val) override;
+
+	std::unique_ptr<CFifo> rqueue;
+	std::unique_ptr<CFifo> tqueue;
+
+private:
+	// The AT command line can consist of a 99-character command sequence
+	// including the AT prefix followed by "D<phone/hostname>", where the
+	// hostname can reach a length of up to 253 characters.
+	// AT<97-chars>D<253-chars> is a string of up to 353 characters plus a
+	// null.
+	char cmdbuf[354] = {0};
+	bool commandmode = false; // true: interpret input as commands
+	bool echo = false;        // local echo on or off
+	bool oldDTRstate = false;
+	bool ringing = false;
+	bool numericresponse = false; // true: send control response as number.
+	                              // false: send text (i.e. NO DIALTONE)
+	bool telnet_mode = false; // Default to direct null modem connection;
+	                         // Telnet mode interprets IAC
+	char connect_string[14] = {"CONNECT 57600"}; // default connect string
+	bool connected = false;
+	uint32_t doresponse = 0;
+	uint8_t waiting_tx_character = 0;
+	uint32_t cmdpause = 0;
+	int32_t ringtimer = 0;
+	uint32_t plusinc = 0;
+	uint32_t cmdpos = 0;
+	uint32_t flowcontrol = 0;
+	uint32_t dtrmode = 0;
+	int32_t dtrofftimer = 0;
+	int32_t warmup_remain_ticks = 0;
+	uint8_t tmpbuf[MODEM_BUFFER_QUEUE_SIZE] = {0};
+	uint16_t listenport = 23; // 23 is the default telnet TCP/IP port
+	uint8_t reg[SREGS] = {0};
+	SocketType socketType = SocketType::Tcp;
+	uint32_t modem_bps_config = 0;
+	std::unique_ptr<NETServerSocket> serversocket = nullptr;
+	std::unique_ptr<NETClientSocket> clientsocket = nullptr;
+	std::unique_ptr<NETClientSocket> waitingclientsocket = nullptr;
+
+	struct {
+		bool binary[2] = {false};
+		bool echo[2] = {false};
+		bool supressGA[2] = {false};
+		bool timingMark[2] = {false};
+		bool inIAC = false;
+		bool recCommand = false;
+		uint8_t command = 0;
+	} telClient;
+
+	struct {
+		bool active = false;
+		double f1 = 0.0;
+		double f2 = 0.0;
+		uint32_t len = 0;
+		uint32_t pos = 0;
+		char str[256] = {0};
+	} dial;
+};
+
+#endif // DOSBOX_SERIALMODEM_H

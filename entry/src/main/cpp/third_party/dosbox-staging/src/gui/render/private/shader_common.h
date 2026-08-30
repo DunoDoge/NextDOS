@@ -1,0 +1,274 @@
+// SPDX-FileCopyrightText:  2026-2026 The DOSBox Staging Team
+// SPDX-License-Identifier: GPL-2.0-or-later
+
+#ifndef DOSBOX_SHADER_COMMON_H
+#define DOSBOX_SHADER_COMMON_H
+
+#include "gui/private/common.h"
+#include "utils/rect.h"
+
+#include <string>
+#include <unordered_map>
+#include <vector>
+
+namespace SymbolicShaderName {
+
+constexpr auto AutoGraphicsStandard = "crt-auto";
+constexpr auto AutoMachine          = "crt-auto-machine";
+constexpr auto AutoArcade           = "crt-auto-arcade";
+constexpr auto AutoArcadeSharp      = "crt-auto-arcade-sharp";
+} // namespace SymbolicShaderName
+
+namespace ShaderName {
+
+constexpr auto CrtHyllian = "crt/crt-hyllian";
+constexpr auto Sharp      = "interpolation/sharp";
+} // namespace ShaderName
+
+enum class ShaderMode {
+	// No shader auto-switching; the 'shader' setting always contains the
+	// name of the shader in use.
+	//
+	Single,
+
+	// Graphics-standard-based adaptive CRT shader mode.
+	// Enabled with the 'crt-auto' magic 'shader' setting.
+	//
+	// The most appropriate shader is auto-selected based on the graphic
+	// standard of the current video mode and the viewport resolution. E.g.,
+	// CGA modes will always use the 'crt/cga-*' shaders, EGA modes the
+	// 'crt/ega-*' shaders, and so on, regardless of the machine type. In
+	// other words, the choice of the shader is governed by the graphics
+	// standard of the current video mode, *not* the emulated video adapter.
+	//
+	// As most users leave the 'machine' setting at the 'svga_s3' default,
+	// this mode gives them single-scanned CRT emulation in CGA and EGA
+	// modes, providing a more authentic out-of-the-box experience
+	// (authentic as in "how people experienced these games at the time of
+	// release", and prioritising the "most probable" developer intent.)
+	//
+	// For CGA and EGA modes that reprogram the 18-bit DAC palette on VGA
+	// adapters, a double-scanned VGA shader is selected. This is authentic
+	// as these games require a VGA adapter, therefore they were designed with
+	// double scanning in mind. In other words, no one could have experienced
+	// them on single scanning CGA and EGA monitors without special hardware
+	// hacks.
+	//
+	AutoGraphicsStandard,
+
+	// Machine-based adaptive CRT shader mode.
+	// Enabled via the 'crt-machine-auto' magic 'shader' setting.
+	//
+	// This mode emulates a computer (machine) equipped with the configured
+	// video adapter and a matching monitor. The auto-switching picks the most
+	// approriate shader variant for the adapter & monitor combo (Hercules,
+	// CGA, EGA, (S)VGA, etc.) for a given viewport resolution.
+	//
+	// E.g., CGA and EGA modes on an emulated VGA adapter type will always use
+	// 'crt/vga-*' shaders, on an EGA adapter always the 'crt/ega-*' shaders,
+	// and so on.
+	//
+	AutoMachine,
+
+	// 15 kHz arcade / home computer monitor adaptive CRT shader mode.
+	// Enabled via the 'crt-machine-arcade' magic 'shader' setting.
+	//
+	// This basically forces single scanning of all double-scanned VGA modes
+	// and no pixel doubling in all modes to achieve a somewhat less sharp
+	// look with more blending and "rounder" pixels than what you'd get on a
+	// typical sharp EGA/VGA PC monitor.
+	//
+	// This is by no means "authentic", but a lot of fun with certain games,
+	// plus it allows you to play DOS ports of Amiga games or other 16-bit
+	// home computers with a single-scanned 15 kHz monitor look.
+	//
+	AutoArcade,
+
+	// A sharper variant of the arcade shader. It's the exact same shader but
+	// with pixel doubling enabled.
+	AutoArcadeSharp
+};
+
+inline const char* to_string(const ShaderMode s)
+{
+	using enum ShaderMode;
+
+	switch (s) {
+	case Single: return "Single";
+	case AutoGraphicsStandard: return "AutoGraphicsStandard";
+	case AutoMachine: return "AutoMachine";
+	case AutoArcade: return "AutoArcade";
+	case AutoArcadeSharp: return "AutoArcadeSharp";
+	default: assertm(false, "Invalid ShaderMode value"); return "";
+	}
+}
+
+/*
+ * A symbolic shader descriptor is a `std::string` in the
+ * `SHADER_NAME[:SHADER_PRESET]` format where `SHADER_NAME` can refer to the
+ * filename of an actual shader on the filesystem, a symbolic alias, or a
+ * "meta-shader". Specifying `SHADER_PRESET` after a colon is optional (the
+ * default preset is used if it's not provided).
+ *
+ * Once a symbolic shader description is turned into a `ShaderDescriptor`, the
+ * symbolic and "meta-shader" shader names are resolved to actual physical
+ * shader names on disk.
+ *
+ * E.g. the `crt-auto` symbolic shader descriptions can be potentially
+ * resolved to `crt/crt-hyllian:vga-4k`.
+ *
+ * Although `ShaderDescriptor`s could contain symbolic and meta shader names,
+ * too, we use them only for resolved descriptors in the codebase for clarity.
+ *
+ * ---
+ *
+ * These are the various shader descriptor use-cases in more detail:
+ *
+ * 1. Referring to an actual shader file in the standard resource lookup
+ *    paths. The .glsl extension can be omitted. A shader preset can be
+ *    optionally specified in the `SHADER_NAME:PRESET_NAME` format. If the
+ *    preset is not specified, the default preset will be used. Examples:
+ *
+ *    - interpolation/catmull-rom.glsl
+ *    - interpolation/catmull-rom
+ *    - crt/crt-hyllian  (the ":" must be omitted if no preset is specified)
+ *    - crt/crt-hyllian:vga-4k
+ *
+ * 2. Referring to an actual shader file on the filesystem via relative
+ *    or absolute paths. The .glsl extension can be omitted. Examples:
+ *
+ *    - ../my-shaders/custom-shader
+ *    - D:\Emulators\DOSBox\shaders\custom-shader.glsl
+ *
+ * 3. Aliased symbolic shader names, e.g.:
+ *
+ *    - bilinear (alias of 'interpolation/bilinear')
+ *    - sharp    (alias of 'interpolation/sharp')
+ *
+ * 4. "Meta-shader" names. Currently, only the auto-CRT shader fall into this
+ *    category that automatically switch presets depending on the machine
+ *    type and the viewport resolution. This is the full list of the meta-
+ *    shaders:
+ *
+ *    - crt-auto
+ *    - crt-auto-machine
+ *    - crt-auto-arcade
+ *    - crt-auto-arcade-sharp
+ */
+struct ShaderDescriptor {
+	std::string shader_name = {};
+	std::string preset_name = {};
+	ShaderMode shader_mode  = {};
+
+	auto operator<=>(const ShaderDescriptor&) const = default;
+
+	std::string ToString() const
+	{
+		if (preset_name.empty()) {
+			return shader_name;
+		} else {
+			return format_str("%s:%s",
+			                  shader_name.c_str(),
+			                  preset_name.c_str());
+		}
+	}
+
+	static ShaderDescriptor FromString(const std::string& descriptor,
+	                                   const std::string& extension);
+
+	bool EnforceAutoIntegerScaling() const;
+};
+
+// The default shader settings are important; we'll get these if the shader
+// doesn't override them via custom pragmas.
+struct ShaderSettings {
+	bool force_single_scan       = false;
+	bool force_no_pixel_doubling = false;
+
+	TextureFilterMode texture_filter_mode = TextureFilterMode::Bilinear;
+
+	bool float_output_texture = false;
+
+	auto operator<=>(const ShaderSettings&) const = default;
+};
+
+using ShaderParameters = std::unordered_map<std::string, float>;
+
+struct ShaderPreset {
+	std::string name        = {};
+	ShaderSettings settings = {};
+	ShaderParameters params = {};
+};
+
+enum class ShaderOutputSize {
+	// Size of output of the previous shader pass
+	Previous,
+
+	// Size of rendered VGA card output (e.g., for the mode 13h VGA mode, it
+	// can be 320x200, 320x400 or 640x400 depending on the double scanning and
+	// pixel doubling settings)
+	Rendered,
+
+	// "Nominal" size of the emulated DOS video mode (e.g., 320x200 for the
+	// mode 13h VGA mode, which is double-scanned to 400 lines)
+	VideoMode,
+
+	// Size of the viewport (depends on the window size or the screen
+	// dimensions in fullscreen, the various viewport restriction settings
+	// like integer scaling, etc.)
+	Viewport
+};
+
+inline const char* to_string(const ShaderOutputSize s)
+{
+	using enum ShaderOutputSize;
+
+	switch (s) {
+	case Previous: return "Previous";
+	case Rendered: return "Rendered";
+	case VideoMode: return "VideoMode";
+	case Viewport: return "Viewport";
+	default: assertm(false, "Invalid ShaderOutputSize value"); return "";
+	}
+}
+
+enum class TextureWrapMode {
+	Repeat,
+	MirroredRepeat,
+	ClampToEdge,
+	ClampToBorder
+};
+
+inline const char* to_string(const TextureWrapMode m)
+{
+	using enum TextureWrapMode;
+
+	switch (m) {
+	case Repeat: return "Repeat";
+	case MirroredRepeat: return "MirroredRepeat";
+	case ClampToEdge: return "ClampToEdge";
+	case ClampToBorder: return "ClampToBorder";
+	default: assertm(false, "Invalid TextureWrapMode value"); return "";
+	}
+}
+
+struct ShaderInfo {
+	// Resolved shader name without the file extension. The name might
+	// optionally contain a relative or absolute directory path.
+	std::string name = {};
+
+	// Name of the shader pass set via `#pragma name`
+	std::string pass_name = {};
+
+	// Input texture IDs and wrap modes (parallel vectors;
+	// set via `#pragma inputN` / `#pragma wrap_modeN`)
+	std::vector<std::string> input_ids = {"Previous"};
+	std::vector<TextureWrapMode> input_wrap_modes = {TextureWrapMode::ClampToEdge};
+
+	// Output size mode set via `#pragma output_size`
+	ShaderOutputSize output_size = ShaderOutputSize::Previous;
+
+	ShaderPreset default_preset = {};
+};
+
+#endif // DOSBOX_SHADER_COMMON_H

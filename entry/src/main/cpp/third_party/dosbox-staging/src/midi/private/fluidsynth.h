@@ -1,0 +1,160 @@
+// SPDX-FileCopyrightText:  2020-2026 The DOSBox Staging Team
+// SPDX-License-Identifier: GPL-2.0-or-later
+
+#ifndef DOSBOX_FLUIDSYNTH_H
+#define DOSBOX_FLUIDSYNTH_H
+
+#include "midi_device.h"
+#include "synth_render_pauser.h"
+
+#include <fluidsynth.h>
+#include <memory>
+#include <optional>
+#include <thread>
+#include <vector>
+
+#include "audio/mixer.h"
+#include "dos/programs/more_output.h"
+#include "misc/std_filesystem.h"
+#include "utils/rwqueue.h"
+
+struct ChorusParameters {
+	int voice_count = {};
+	double level    = {};
+	double speed    = {};
+	double depth    = {};
+	int mod_wave    = {};
+};
+
+struct ReverbParameters {
+	double room_size = {};
+	double damping   = {};
+	double width     = {};
+	double level     = {};
+};
+
+enum class SoundFont {
+	// Unidentified SoundFont
+	Unknown,
+
+	// GeneralUser GS -- a general-purpose Roland GS compatible SoundFont by
+	// S. Christian Collins
+	//
+	// Ref: https://schristiancollins.com/generaluser.php
+	//
+	GeneralUserGs,
+
+	// Conversion of the original 'synthgs.sbk' AWE32 SoundFont by S.
+	// Christian Collins
+	//
+	// Ref: https://github.com/mrbumpy409/AWE32-midi-conversions
+	//
+	Awe32_SynthGs,
+
+	// Conversion of the original '4gmgsmt.sf2' Sound Blaster Live! SoundFont
+	// by S. Christian Collins
+	//
+	// Ref: https://github.com/mrbumpy409/AWE32-midi-conversions
+	//
+	SbLive_4GmGsMt,
+
+	// Fluid R3 -- a general-purpose Roland GS compatible SoundFont by Frank
+	// Wen
+	//
+	// Ref:
+	// - https://www.polyphone.io/en/soundfonts/instrument-sets/250-fluidr3-gm
+	// - https://archive.org/download/fluidr3-gm-gs
+	//
+	FluidR3,
+
+	// Trevor0402's Roland SC-55 emulation
+	//
+	// Ref:
+	// -
+	// https://www.doomworld.com/forum/topic/118828-trevor0402s-sc-55-soundfont/
+	// - https://archive.org/download/500-soundfonts-full-gm-sets/ (SC-55
+	// SoundFont.v1.2b [Trevor0402].sf2)
+	//
+	Trevor0402_Sc55
+};
+
+class MidiDeviceFluidSynth final : public MidiDevice {
+public:
+	// Throws `std::runtime_error` if the MIDI device cannot be initialiased
+	// (e.g., the requested SoundFont cannot be loaded).
+	MidiDeviceFluidSynth();
+
+	~MidiDeviceFluidSynth() override;
+
+	void PrintStats();
+
+	std::string GetName() const override
+	{
+		return MidiDeviceName::FluidSynth;
+	}
+
+	Type GetType() const override
+	{
+		return MidiDevice::Type::Internal;
+	}
+
+	void SendMidiMessage(const MidiMessage& msg) override;
+	void SendSysExMessage(uint8_t* sysex, size_t len) override;
+
+	void Pause() override;
+	void Resume() override;
+
+	std_fs::path GetSoundFontPath();
+
+	void SetChorus();
+	void SetReverb();
+	void SetFilter();
+
+	void SetVolume(const int volume_percent);
+
+private:
+	void IdentifySoundFont();
+
+	void SetChorusParams(const ChorusParameters& params);
+	void SetReverbParams(const ReverbParameters& params);
+
+	void ApplyChannelMessage(const std::vector<uint8_t>& msg);
+	void ApplySysExMessage(const std::vector<uint8_t>& msg);
+	void MixerCallback(const int requested_audio_frames);
+	void ProcessWorkFromFifo();
+
+	int GetNumPendingAudioFrames();
+	void RenderAudioFramesToFifo(const int num_audio_frames = 1);
+	void Render();
+
+	using FluidSynthSettingsPtr =
+	        std::unique_ptr<fluid_settings_t, decltype(&delete_fluid_settings)>;
+
+	using FluidSynthPtr = std::unique_ptr<fluid_synth_t, decltype(&delete_fluid_synth)>;
+
+	FluidSynthSettingsPtr settings{nullptr, &delete_fluid_settings};
+	FluidSynthPtr synth{nullptr, &delete_fluid_synth};
+
+	MixerChannelPtr mixer_channel = nullptr;
+	RWQueue<AudioFrame> audio_frame_fifo{1};
+	RWQueue<MidiWork> work_fifo{1};
+	std::thread renderer = {};
+
+	// Parks the renderer thread during a DOSBox pause.
+	SynthRenderPauser pauser = {};
+
+	std_fs::path soundfont_path = {};
+
+	SoundFont soundfont = {};
+
+	// Used to track the balance of time between the last mixer callback
+	// versus the current MIDI SysEx or Msg event.
+	double last_rendered_ms   = 0.0;
+	double ms_per_audio_frame = 0.0;
+
+	bool had_underruns = false;
+};
+
+void FSYNTH_ListDevices(MidiDeviceFluidSynth* device, MoreOutputStrings& output);
+
+#endif // DOSBOX_FLUIDSYNTH_H

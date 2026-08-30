@@ -1,0 +1,207 @@
+// SPDX-FileCopyrightText:  2002-2021 The DOSBox Team
+// SPDX-License-Identifier: GPL-2.0-or-later
+
+#include "cpu/string_ops.h"
+
+enum {
+	L_N=0,
+	L_SKIP,
+	/* Grouped ones using MOD/RM */
+	L_MODRM,L_MODRM_NVM,L_POPwRM,L_POPdRM,
+	
+	L_Ib,L_Iw,L_Id,
+	L_Ibx,L_Iwx,L_Idx,				//Sign extend
+	L_Ifw,L_Ifd,
+	L_OP,
+
+	L_REGb,L_REGw,L_REGd,
+	L_REGbIb,L_REGwIw,L_REGdId,
+	L_POPw,L_POPd,
+	L_POPfw,L_POPfd,
+	L_SEG,
+
+	L_INTO,
+
+	L_VAL,
+	L_PRESEG,
+	L_DOUBLE,
+	L_PREOP,L_PREADD,L_PREREP,L_PREREPNE,
+	L_STRING,
+
+/* Direct ones */
+	D_IRETw,D_IRETd,
+	D_PUSHAw,D_PUSHAd,
+	D_POPAw,D_POPAd,
+	D_POPSEGw,D_POPSEGd,
+	D_DAA,D_DAS,
+	D_AAA,D_AAS,
+	D_CBW,D_CWDE,
+	D_CWD,D_CDQ,
+	D_SETALC,
+	D_XLAT,
+	D_CLI,D_STI,D_STC,D_CLC,D_CMC,D_CLD,D_STD,
+	D_NOP,D_WAIT,
+	D_ENTERw,D_ENTERd,
+	D_LEAVEw,D_LEAVEd,
+	
+	D_RETFw,D_RETFd,
+	D_RETFwIw,D_RETFdIw,
+	D_POPF,D_PUSHF,
+	D_SAHF,D_LAHF,
+	D_CPUID,
+	D_HLT,D_CLTS,
+	D_LOCK,D_ICEBP,
+	D_RDTSC,
+	L_ERROR
+};
+
+
+enum {
+	O_N=t_LASTFLAG,
+	O_COND,
+	O_XCHG_AX,O_XCHG_EAX,
+	O_IMULRw,O_IMULRd,
+	O_BOUNDw,O_BOUNDd,
+	O_CALLNw,O_CALLNd,
+	O_CALLFw,O_CALLFd,
+	O_JMPFw,O_JMPFd,
+
+	O_OPAL,O_ALOP,
+	O_OPAX,O_AXOP,
+	O_OPEAX,O_EAXOP,
+	O_INT,
+	O_SEGDS,O_SEGES,O_SEGFS,O_SEGGS,O_SEGSS,
+	O_LOOP,O_LOOPZ,O_LOOPNZ,O_JCXZ,
+	O_INb,O_INw,O_INd,
+	O_OUTb,O_OUTw,O_OUTd,
+
+	O_NOT,O_AAM,O_AAD,
+	O_MULb,O_MULw,O_MULd,
+	O_IMULb,O_IMULw,O_IMULd,
+	O_DIVb,O_DIVw,O_DIVd,
+	O_IDIVb,O_IDIVw,O_IDIVd,
+	O_CBACK,
+
+
+	O_DSHLw,O_DSHLd,
+	O_DSHRw,O_DSHRd,
+	O_C_O	,O_C_NO	,O_C_B	,O_C_NB	,O_C_Z	,O_C_NZ	,O_C_BE	,O_C_NBE,
+	O_C_S	,O_C_NS	,O_C_P	,O_C_NP	,O_C_L	,O_C_NL	,O_C_LE	,O_C_NLE,
+
+	O_GRP6w,O_GRP6d,
+	O_GRP7w,O_GRP7d,
+	O_M_CRx_Rd,O_M_Rd_CRx,
+	O_M_DRx_Rd,O_M_Rd_DRx,
+	O_M_TRx_Rd,O_M_Rd_TRx,
+	O_LAR,O_LSL,
+	O_ARPL,
+	
+	O_BTw,O_BTSw,O_BTRw,O_BTCw,
+	O_BTd,O_BTSd,O_BTRd,O_BTCd,
+	O_BSFw,O_BSRw,O_BSFd,O_BSRd,
+
+	O_BSWAPw, O_BSWAPd,
+	O_CMPXCHG,
+	O_FPU
+
+
+};
+
+enum {
+	S_N=0,
+	S_C_Eb,
+	S_Eb,S_Gb,S_EbGb,
+	S_Ew,S_Gw,S_EwGw,
+	S_Ed,S_Gd,S_EdGd,S_EdMw,
+
+	
+	S_REGb,S_REGw,S_REGd,
+	S_PUSHw,S_PUSHd,
+	S_SEGm,
+	S_SEGGw,S_SEGGd,
+
+	
+	S_AIPw,S_C_AIPw,
+	S_AIPd,S_C_AIPd,
+
+	S_IP,S_IPIw
+};
+
+enum {
+	M_None=0,
+	M_Ebx,M_Eb,M_Gb,M_EbGb,M_GbEb,
+	M_Ewx,M_Ew,M_Gw,M_EwGw,M_GwEw,M_EwxGwx,M_EwGwt,
+	M_Edx,M_Ed,M_Gd,M_EdGd,M_GdEd,M_EdxGdx,M_EdGdt,
+	
+	M_EbIb,M_EwIb,M_EdIb,
+	M_EwIw,M_EwIbx,M_EwxIbx,M_EwxIwx,M_EwGwIb,M_EwGwCL,
+	M_EdId,M_EdIbx,M_EdGdIb,M_EdGdCL,
+	
+	M_Efw,M_Efd,
+	
+	M_Ib,M_Iw,M_Id,
+
+
+	M_SEG,M_EA,
+	M_GRP,
+	//Special shift groups
+	M_SHIFT_1, M_SHIFT_Ib,M_SHIFT_CL,
+
+	M_POPw,M_POPd
+};
+
+struct OpCode {
+	uint8_t load,op,save,extra;
+};
+
+struct FullData {
+	Bitu entry;
+	Bitu rm;
+	EAPoint rm_eaa;
+	Bitu rm_off;
+	Bitu rm_eai;
+	Bitu rm_index;
+	Bitu rm_mod;
+	OpCode code;
+	EAPoint cseip;
+	union {	
+		uint8_t b;int8_t bs;
+		uint16_t w;int16_t ws;
+		uint32_t d;int32_t ds;
+	} op1,op2,imm;
+	Bitu new_flags;
+	struct {
+		EAPoint base;
+	} seg;
+	Bitu cond;
+	bool repz;
+	Bitu prefix;
+};
+
+/* Some defines to get the names correct. */
+#define inst_op1_b  inst.op1.b
+#define inst_op1_bs inst.op1.bs
+#define inst_op1_w  inst.op1.w
+#define inst_op1_ws inst.op1.ws
+#define inst_op1_d  inst.op1.d
+#define inst_op1_ds inst.op1.ds
+
+#define inst_op2_b  inst.op2.b
+#define inst_op2_bs inst.op2.bs
+#define inst_op2_w  inst.op2.w
+#define inst_op2_ws inst.op2.ws
+#define inst_op2_d  inst.op2.d
+#define inst_op2_ds inst.op2.ds
+
+#define inst_imm_b  inst.imm.b
+#define inst_imm_bs inst.imm.bs
+#define inst_imm_w  inst.imm.w
+#define inst_imm_ws inst.imm.ws
+#define inst_imm_d  inst.imm.d
+#define inst_imm_ds inst.imm.ds
+
+#define PREFIX_NONE		0x0
+#define PREFIX_ADDR		0x1
+#define PREFIX_SEG		0x2
+#define PREFIX_REP		0x4
+

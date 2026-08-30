@@ -2,8 +2,8 @@ import { hilog } from '@kit.PerformanceAnalysisKit';
 import { common } from '@kit.AbilityKit';
 import { BusinessError } from '@kit.BasicServicesKit';
 import { DosEmulator } from '../model/DosEmulator';
+import { DosKeyMap } from '../model/DosKeyMap';
 import { MountFolder } from '../model/MountFolder';
-import { XtScanCodeMap } from '../model/XtScanCodeMap';
 import { EmulatorScreen } from '../view/EmulatorScreen';
 import { SoftKeyboard } from '../view/SoftKeyboard';
 
@@ -55,18 +55,10 @@ struct Index {
     if (event.type !== KeyType.Down && event.type !== KeyType.Up) {
       return;
     }
-    const down: boolean = event.type === KeyType.Down;
-    const alt: boolean = event.getModifierKeyState !== undefined
-      ? event.getModifierKeyState(['alt']) : false;
-    const shift: boolean = event.getModifierKeyState !== undefined
-      ? event.getModifierKeyState(['shift']) : false;
-    const ctrl: boolean = event.getModifierKeyState !== undefined
-      ? event.getModifierKeyState(['ctrl']) : false;
-    const sdl: number = XtScanCodeMap.sdlCodeFor(event.keyCode, event.keyText, shift, ctrl);
-    if (sdl < 0) {
+    if (!DosKeyMap.isInjectable(event.keyCode)) {
       return;
     }
-    this.emu.injectKey(XtScanCodeMap.buildKeyValue(sdl, alt, shift, ctrl, !down));
+    this.emu.injectKey(event.keyCode, event.type === KeyType.Down);
   }
 
   private async handleMountButton(): Promise<void> {
