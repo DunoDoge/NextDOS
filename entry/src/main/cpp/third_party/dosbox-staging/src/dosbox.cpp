@@ -891,6 +891,14 @@ bool DOSBOX_IsShutdownRequested()
 	return is_shutdown_requested.load(std::memory_order_relaxed);
 }
 
+// Upstream assumes one run per process, so the latch is never cleared;
+// the embed host re-runs the engine in-process and clears it before
+// each run.
+void DOSBOX_ClearShutdownRequest()
+{
+	is_shutdown_requested.store(false, std::memory_order_relaxed);
+}
+
 static void DOSBOX_UnlockSpeed(bool pressed)
 {
 	static bool autoadjust = false;

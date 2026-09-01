@@ -873,6 +873,16 @@ void AUTOEXEC_Init()
 	auto section = get_autoexec_section("autoexec");
 	assert(section);
 
+	// Embed-mode re-init: drop the previous run's collected lines or the
+	// static map accumulates them, so stale `mount`/`c:` commands from
+	// earlier runs would keep executing on this one. AUTOEXEC_RefreshFile()
+	// only regenerates AUTOEXEC.BAT when the cached copy is empty, so
+	// discard that too.
+	autoexec_lines.clear();
+	autoexec_bat_utf8 = {};
+	autoexec_bat_bin.clear();
+	vfile_code_page   = {};
+
 	autoexec_module = std::make_unique<AutoExecModule>(section);
 	AUTOEXEC_RefreshFile();
 }

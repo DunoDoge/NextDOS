@@ -47,6 +47,10 @@ void DOSBOX_RequestShutdown();
 
 bool DOSBOX_IsShutdownRequested();
 
+// Embed-host support: clears the latch set by `DOSBOX_RequestShutdown()`
+// so the engine can be re-initialized in-process for a new run.
+void DOSBOX_ClearShutdownRequest();
+
 // Pause API. The emulator is either running or paused. Pause requests come
 // from the user (via hotkeys today; an HTTP API pause endpoint is planned
 // but not yet implemented) and from host-window inactivity (when the
