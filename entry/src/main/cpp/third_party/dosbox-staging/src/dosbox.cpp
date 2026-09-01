@@ -84,6 +84,10 @@ SvgaType svga_type  = SvgaType::None;
 
 static LoopHandler* loop;
 
+// Floor for the `cycles=max` auto-adjuster on embed hosts; see the header
+// comment of DOSBOX_SetEmbedCycleFloor() for why this is needed.
+static int embed_cycle_floor = 0;
+
 static struct {
 	int64_t remain    = {};
 	int64_t last      = {};
@@ -821,6 +825,14 @@ static void increase_ticks()
 					// explicitly specified.
 					CPU_CycleMax = CpuCyclesMax;
 				}
+
+				// Embed hosts pin the auto-adjuster's downward
+				// reach at the config-seeded speed; see
+				// DOSBOX_SetEmbedCycleFloor().
+				if (embed_cycle_floor > 0 &&
+				    CPU_CycleMax < embed_cycle_floor) {
+					CPU_CycleMax = embed_cycle_floor;
+				}
 			}
 		}
 
@@ -837,6 +849,12 @@ static void increase_ticks()
 
 		if (CPU_CycleMax < auto_cpu_cycles_min) {
 			CPU_CycleMax = auto_cpu_cycles_min;
+		}
+
+		// Embed hosts pin the auto-adjuster's downward reach at the
+		// config-seeded speed; see DOSBOX_SetEmbedCycleFloor().
+		if (embed_cycle_floor > 0 && CPU_CycleMax < embed_cycle_floor) {
+			CPU_CycleMax = embed_cycle_floor;
 		}
 	}
 }
@@ -897,6 +915,32 @@ bool DOSBOX_IsShutdownRequested()
 void DOSBOX_ClearShutdownRequest()
 {
 	is_shutdown_requested.store(false, std::memory_order_relaxed);
+}
+
+// The `ticks` wall-clock accounting is static, so a re-run inherits the
+// previous run's timestamps. The first increase_ticks() then sees the whole
+// teardown/init gap as one delta, which gets clamped to 20 pending ticks --
+// from there the loop only ever re-enters increase_ticks() ~20 ms apart,
+// and with `cycles=max` the auto-adjuster reads the resulting
+// scheduled-vs-done mismatch as heavy host load and collapses the guest.
+// Upstream rebases the same struct on pause-resume for the same reason;
+// the embed host rebases it before each re-run.
+//
+// The auto-adjust bookkeeping itself (CPU_IODelayRemoved and the
+// done/scheduled windows) must be reset too, or the previous run's stale
+// tally vetoes this run's early adjustments.
+void DOSBOX_RebaseWallClockForRestart()
+{
+	rebase_wall_clock_on_resume();
+	CPU_ResetAutoAdjust();
+}
+
+void DOSBOX_SetEmbedCycleFloor(const int floor_cycles)
+{
+	embed_cycle_floor = floor_cycles;
+	if (embed_cycle_floor > 0 && CPU_CycleMax < embed_cycle_floor) {
+		CPU_CycleMax = embed_cycle_floor;
+	}
 }
 
 static void DOSBOX_UnlockSpeed(bool pressed)
