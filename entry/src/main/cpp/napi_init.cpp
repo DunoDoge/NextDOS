@@ -194,11 +194,11 @@ static napi_value Resume(napi_env env, napi_callback_info info)
     return result;
 }
 
-/* ---------- injectKey(keyCode, down) ---------- */
+/* ---------- injectKey(keyCode, down, shift?) ---------- */
 static napi_value InjectKey(napi_env env, napi_callback_info info)
 {
-    size_t argc = 2;
-    napi_value args[2] = {nullptr, nullptr};
+    size_t argc = 3;
+    napi_value args[3] = {nullptr, nullptr, nullptr};
     napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
 
     if (argc >= 2) {
@@ -206,8 +206,12 @@ static napi_value InjectKey(napi_env env, napi_callback_info info)
         bool keyDown = false;
         napi_get_value_int32(env, args[0], &keyCode);
         napi_get_value_bool(env, args[1], &keyDown);
+        bool keyShift = false;
+        if (argc >= 3) {
+            napi_get_value_bool(env, args[2], &keyShift);
+        }
 
-        nextdos::input_inject_key(keyCode, keyDown, false, false, false);
+        nextdos::input_inject_key(keyCode, keyDown, keyShift, false, false);
     }
 
     napi_value result;

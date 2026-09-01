@@ -3,6 +3,7 @@ import type { FrameInfo } from 'libentry.so';
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { common } from '@kit.AbilityKit';
 import { fileIo as fs } from '@kit.CoreFileKit';
+import { KeyCode } from '@kit.InputKit';
 
 const TAG: string = 'NextDOS';
 const FRAME_INTERVAL_MS: number = 16;
@@ -78,34 +79,34 @@ export class DosEmulator {
   }
 
   /**
-   * Mounts a host folder as the emulated C: drive. The config file is
-   * regenerated with the new [autoexec] mount and the emulator is restarted
-   * (stop -> writeConfig -> start), matching the native re-init flow.
+   * Mounts a host folder as the emulated C: drive by typing the DOS
+   * `mount` command into the RUNNING guest — no engine restart. The
+   * config file is still regenerated so a later engine restart re-mounts.
    */
-  mountFolder(dir: string): void {
+  async mountFolder(dir: string): Promise<void> {
     const wasRunning: boolean = this.running;
-    if (wasRunning) {
-      this.stop();
-    }
     this.mountedFolder = dir;
     this.writeConfig();
     testNapi.mountFolder(dir);
-    if (wasRunning) {
+    if (!wasRunning) {
       this.start();
+      return;
     }
+    // No automatic `c:` drive switch is injected; the user switches
+    // manually in the guest.
+    await this.typeIntoGuest('mount c ' + dir + '\r');
   }
 
-  unmountFolder(): void {
+  /** Unmounts C: by typing `mount -u c` into the running guest. */
+  async unmountFolder(): Promise<void> {
     const wasRunning: boolean = this.running;
-    if (wasRunning) {
-      this.stop();
-    }
     this.mountedFolder = '';
     this.writeConfig();
     testNapi.unmountFolder();
-    if (wasRunning) {
-      this.start();
+    if (!wasRunning) {
+      return;
     }
+    await this.typeIntoGuest('mount -u c\r');
   }
 
   isFolderMounted(): boolean {
@@ -199,5 +200,72 @@ export class DosEmulator {
 
   isPaused(): boolean {
     return this.paused;
+  }
+
+  /** ASCII character → HarmonyOS keyCode, or -1 when not typable. */
+  private static charToKeyCode(ch: string): number {
+    const code: number = ch.charCodeAt(0);
+    if (ch >= 'a' && ch <= 'z') {
+      return KeyCode.KEYCODE_A + (code - 97);
+    }
+    if (ch >= 'A' && ch <= 'Z') {
+      return KeyCode.KEYCODE_A + (code - 65);
+    }
+    if (ch >= '0' && ch <= '9') {
+      return KeyCode.KEYCODE_0 + (code - 48);
+    }
+    switch (ch) {
+      case '/':
+        return KeyCode.KEYCODE_SLASH;
+      case '.':
+        return KeyCode.KEYCODE_PERIOD;
+      case '-':
+        return KeyCode.KEYCODE_MINUS;
+      case ' ':
+        return KeyCode.KEYCODE_SPACE;
+      case '\r':
+      case '\n':
+        return KeyCode.KEYCODE_ENTER;
+      default:
+        break;
+    }
+    return -1;
+  }
+
+  private static sleepMs(ms: number): Promise<void> {
+    return new Promise<void>((resolve: (v: void) => void) => {
+      setTimeout(() => {
+        resolve();
+      }, ms);
+    });
+  }
+
+  /**
+   * Types text into the running guest through the keyboard-injection
+   * path (down/up pairs, spaced so the BIOS key buffer keeps up).
+   */
+  async typeIntoGuest(text: string): Promise<void> {
+    if (!this.running) {
+      return;
+    }
+    for (let i = 0; i < text.length; i++) {
+      const ch: string = text.charAt(i);
+      const keyCode: number = DosEmulator.charToKeyCode(ch);
+      if (keyCode < 0) {
+        continue;
+      }
+      const withShift: boolean = ch >= 'A' && ch <= 'Z';
+      if (withShift) {
+        testNapi.injectKey(KeyCode.KEYCODE_SHIFT_LEFT, true, true);
+        await DosEmulator.sleepMs(30);
+      }
+      testNapi.injectKey(keyCode, true, withShift);
+      testNapi.injectKey(keyCode, false, withShift);
+      if (withShift) {
+        await DosEmulator.sleepMs(30);
+        testNapi.injectKey(KeyCode.KEYCODE_SHIFT_LEFT, false, true);
+      }
+      await DosEmulator.sleepMs(20);
+    }
   }
 }
