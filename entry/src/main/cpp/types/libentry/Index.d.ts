@@ -27,8 +27,8 @@ export const unmountFolder: () => void;
 export const reset: () => void;
 export const pause: () => void;
 export const resume: () => void;
-/** Injects a HarmonyOS key event: @ohos.multimodalInput.keyCode value + key-down flag. */
-export const injectKey: (keyCode: number, down: boolean) => void;
+/** Injects a HarmonyOS key event: @ohos.multimodalInput.keyCode value + key-down flag; optional shift modifier state. */
+export const injectKey: (keyCode: number, down: boolean, shift?: boolean) => void;
 /** action: 0=move, 1=button (1/2/3 down, +4 up), 2=wheel. x/y in frame pixel space; relX/relY deltas. */
 export const injectMouse: (action: number, button: number, x: number, y: number, relX: number, relY: number) => void;
 export const getFrame: () => FrameInfo;

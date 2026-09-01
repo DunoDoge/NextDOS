@@ -68,14 +68,14 @@ struct Index {
     this.mountBusy = true;
     try {
       if (this.folderMounted) {
-        this.emu.unmountFolder();
+        await this.emu.unmountFolder();
         this.folderMounted = false;
         this.showToast('C: 目录已卸载');
       } else {
         const ctx = getContext(this) as common.UIAbilityContext;
         const dir: string = await MountFolder.prepareMountDir(ctx);
         MountFolder.verifyAccess(dir);
-        this.emu.mountFolder(dir);
+        await this.emu.mountFolder(dir);
         this.folderMounted = true;
         this.showToast('C: 已挂载 ' + dir);
       }
@@ -92,17 +92,6 @@ struct Index {
     this.getUIContext().getPromptAction().showToast({ message: message });
   }
 
-  @Builder
-  toolbarButton(label: string, action: () => void) {
-    Button(label)
-      .fontSize(13)
-      .height(32)
-      .padding({ left: 14, right: 14 })
-      .onClick(() => {
-        action();
-      })
-  }
-
   build() {
     Column() {
       Row({ space: 8 }) {
@@ -111,20 +100,38 @@ struct Index {
           .fontWeight(FontWeight.Bold)
           .fontColor('#FFFFFF')
         Blank()
-        this.toolbarButton(this.paused ? '继续' : '暂停', () => {
-          this.emu.togglePause();
-          this.paused = this.emu.isPaused();
-        })
-        this.toolbarButton('重启', () => {
-          this.emu.reset();
-          this.paused = false;
-        })
-        this.toolbarButton(this.keyboardVisible ? '收起键盘' : '显示键盘', () => {
-          this.keyboardVisible = !this.keyboardVisible;
-        })
-        this.toolbarButton(this.folderMounted ? '卸载目录' : '挂载目录', () => {
-          this.handleMountButton();
-        })
+        // Inlined buttons (no @Builder wrapper): @Builder by-value params
+        // are captured once and don't refresh when the @State label changes.
+        Button(this.paused ? '继续' : '暂停')
+          .fontSize(13)
+          .height(32)
+          .padding({ left: 14, right: 14 })
+          .onClick(() => {
+            this.emu.togglePause();
+            this.paused = this.emu.isPaused();
+          })
+        Button('重启')
+          .fontSize(13)
+          .height(32)
+          .padding({ left: 14, right: 14 })
+          .onClick(() => {
+            this.emu.reset();
+            this.paused = false;
+          })
+        Button(this.keyboardVisible ? '收起键盘' : '显示键盘')
+          .fontSize(13)
+          .height(32)
+          .padding({ left: 14, right: 14 })
+          .onClick(() => {
+            this.keyboardVisible = !this.keyboardVisible;
+          })
+        Button(this.folderMounted ? '卸载目录' : '挂载目录')
+          .fontSize(13)
+          .height(32)
+          .padding({ left: 14, right: 14 })
+          .onClick(() => {
+            this.handleMountButton();
+          })
       }
       .width('100%')
       .padding({ left: 12, right: 12, top: 8, bottom: 8 })
