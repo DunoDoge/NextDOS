@@ -51,6 +51,22 @@ bool DOSBOX_IsShutdownRequested();
 // so the engine can be re-initialized in-process for a new run.
 void DOSBOX_ClearShutdownRequest();
 
+// Embed-host support: rebases the static wall-clock accounting and the
+// cycles auto-adjust bookkeeping so a re-run starts from clean state (see
+// the definition for why that matters with `cycles=max`).
+void DOSBOX_RebaseWallClockForRestart();
+
+// Embed-host support: never let the cycles auto-adjuster drop `cycles=max`
+// below the value the config initially seeded. The downward adjustments
+// exist to protect against host overrun, but on a mobile embed the host
+// side stalls in bursts (UI, GC, filesystem); each stall trips the
+// ">15ms without ticks" rules, the collapses compound, and once the guest
+// is slow enough, its removed-IO-delay tally vetoes every recovery
+// adjustment -- the speed locks at the floor and inputs take seconds to
+// echo. `cycles=max` means "as fast as the host can", so pin the floor at
+// the config-seeded value and let the adjuster only move it upward.
+void DOSBOX_SetEmbedCycleFloor(int floor_cycles);
+
 // Pause API. The emulator is either running or paused. Pause requests come
 // from the user (via hotkeys today; an HTTP API pause endpoint is planned
 // but not yet implemented) and from host-window inactivity (when the

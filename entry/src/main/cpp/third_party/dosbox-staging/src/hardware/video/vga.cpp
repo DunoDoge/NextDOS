@@ -301,6 +301,14 @@ void VGA_Init()
 {
 	vga.draw.resizing = false;
 
+	// Embed-mode re-init: the previous run's vertical-timing value would
+	// make this run's first VGA_SetupDrawing() see "refresh rate not
+	// changed" and skip its fps-changed branch -- the only place that
+	// arms the vertical-timer PIC event. Without the reset no frame is
+	// ever drawn again and the display stays frozen on the last frame of
+	// the previous run.
+	vga.draw.delay.vtotal = 0;
+
 	// For first init
 	vga.mode = M_ERROR;
 

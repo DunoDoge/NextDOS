@@ -8,6 +8,7 @@
 // through the engine's built-in request APIs.
 
 #include <atomic>
+#include <chrono>
 #include <cstring>
 #include <memory>
 #include <string>
@@ -21,6 +22,10 @@
 
 #include "config/config.h"
 #include "config/setup.h"
+#include "cpu/cpu.h"
+#include "hardware/memory.h"
+#include "hardware/input/keyboard.h"
+#include "hardware/pic.h"
 #include "misc/cross.h"
 #include "dos/dos_locale.h"
 #include "dosbox.h"
@@ -36,6 +41,8 @@
 
 #include "ohos_embed.h"
 #include "ohos_render_backend.h"
+
+#include <vector>
 
 // Implemented in ohos_resources.cpp
 bool ohos_deploy_resources(const std::string& files_dir);
@@ -172,6 +179,20 @@ int embed_main(int argc, char** argv)
 		// to ensure their hotkeys appear in the graphical mapper.
 		MAPPER_BindKeys(get_sdl_section());
 
+		// The cycles config has been applied; from here on the
+		// auto-adjuster may not drop the guest below the seeded speed.
+		// Mobile hosts stall in bursts (UI, GC, filesystem), and
+		// without the floor each stall ratchets `cycles=max` down
+		// until the adjuster locks at its minimum and inputs take
+		// seconds to echo. See DOSBOX_SetEmbedCycleFloor().
+		DOSBOX_SetEmbedCycleFloor(CPU_CycleMax);
+
+		// Rebase the wall-clock accounting as close to the machine
+		// loop as possible: the static `ticks` state would otherwise
+		// hand this run the whole teardown/init duration as its first
+		// tick delta and skew the `cycles=max` auto-adjuster.
+		DOSBOX_RebaseWallClockForRestart();
+
 		// Start emulation (blocks until the guest exits or a shutdown
 		// was requested).
 		SHELL_InitAndRun();
@@ -209,6 +230,7 @@ void thread_main()
 		                    ? std::string(".")
 		                    : g_conf_path.substr(0, slash);
 	}
+
 	const bool resources_ok = ohos_deploy_resources(files_dir);
 
 	// NOTE: the config must go through --conf; a bare positional argument
