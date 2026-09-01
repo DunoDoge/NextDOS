@@ -353,6 +353,13 @@ void VGA_Init()
 void VGA_Destroy()
 {
    VGA_DestroyMemory();
+
+   // Embed-mode re-init: forget the previous run's video mode so the
+   // next run's VGA_SetupDrawing() re-runs RENDER_SetSize(); otherwise
+   // the identical text mode skips it and `render.active` stays false
+   // (halted during the previous teardown), leaving the new engine's
+   // display permanently unrendered.
+   vga.draw.image_info = {};
 }
 
 void SVGA_Setup_Driver(void)

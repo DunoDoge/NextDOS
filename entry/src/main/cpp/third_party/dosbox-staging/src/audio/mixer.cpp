@@ -3361,6 +3361,11 @@ void MIXER_Init()
 	// One second of audio
 	mixer.capture_queue.Resize(mixer.sample_rate_hz * 2);
 
+	// Embed-mode re-init: `MIXER_CloseAudioDevice()` latched this flag to
+	// stop the previous run's thread; clear it or the freshly spawned
+	// thread below exits immediately and the pause fade never completes.
+	mixer.thread_should_quit = false;
+
 	mixer.thread = std::thread(mixer_thread_loop);
 	set_thread_name(mixer.thread, "dosbox:mixer");
 

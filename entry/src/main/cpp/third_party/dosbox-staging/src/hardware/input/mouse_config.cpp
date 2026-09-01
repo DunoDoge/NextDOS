@@ -504,6 +504,11 @@ void MOUSE_Init()
 	set_virtualbox_mouse(*section);
 
 	// Start mouse emulation if everything is ready
+	// Embed-mode re-init: clear the startup latch set by the previous
+	// run; otherwise MOUSE_StartupIfReady() below (and thus the whole
+	// mouse startup, incl. MOUSEDOS_Init) is skipped on every run after
+	// the first, breaking the DOS mouse driver TSR lifecycle.
+	mouse_shared.started      = false;
 	mouse_shared.ready_config = true;
 	mouse_shared.ready_init   = true;
 	MOUSE_StartupIfReady();

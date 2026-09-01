@@ -115,6 +115,10 @@ int embed_main(int argc, char** argv)
 
 	const auto version_string = DOSBOX_GetDetailedVersion();
 
+	// The embed host re-runs the engine in-process; clear the previous
+	// run's shutdown latch or this run exits before the machine loop.
+	DOSBOX_ClearShutdownRequest();
+
 	SDL_SetAppMetadataProperty(SDL_PROP_APP_METADATA_NAME_STRING,
 	                           DOSBOX_PROJECT_NAME);
 	SDL_SetAppMetadataProperty(SDL_PROP_APP_METADATA_VERSION_STRING,
@@ -212,21 +216,24 @@ void thread_main()
 	// which phantom-typed the conf file name into the DOS shell.
 	std::string conf_arg   = "--conf";
 	std::string working_arg = "--working-dir";
+	int run_rc = 0;
 	if (g_arg_conf) {
 		if (resources_ok) {
 			char* args[] = {g_arg_program, conf_arg.data(),
 			                g_arg_conf_value, working_arg.data(),
 			                files_dir.data(), nullptr};
-			embed_main(5, args);
+			run_rc = embed_main(5, args);
 		} else {
 			char* args[] = {g_arg_program, conf_arg.data(),
 			                g_arg_conf_value, nullptr};
-			embed_main(3, args);
+			run_rc = embed_main(3, args);
 		}
 	} else {
 		char* args[] = {g_arg_program, nullptr};
-		embed_main(1, args);
+		run_rc = embed_main(1, args);
 	}
+
+	LOG_MSG("NEXTDOS: engine run finished (rc=%d)", run_rc);
 
 	g_running.store(false, std::memory_order_release);
 	g_shutdown_done.store(true, std::memory_order_release);
@@ -267,6 +274,8 @@ int host_start(const char* conf_path)
 	}
 
 	g_running.store(true, std::memory_order_release);
+	LOG_MSG("NEXTDOS: emulator thread started (conf: %s)",
+	        g_conf_path.c_str());
 	return 0;
 }
 
@@ -274,18 +283,21 @@ void host_stop()
 {
 	if (!g_running.load(std::memory_order_acquire)) {
 		if (g_thread.joinable() && !g_shutdown_done.load()) {
+			LOG_MSG("NEXTDOS: stopping engine thread (late shutdown)");
 			DOSBOX_RequestShutdown();
 			g_thread.join();
 		}
 		return;
 	}
 
+	LOG_MSG("NEXTDOS: stopping engine thread");
 	DOSBOX_RequestShutdown();
 
 	if (g_thread.joinable()) {
 		g_thread.join();
 	}
 	g_running.store(false, std::memory_order_release);
+	LOG_MSG("NEXTDOS: engine thread stopped");
 }
 
 void host_restart()

@@ -1131,6 +1131,21 @@ void I8042_Init()
 {
 	assert(BufferSize >= FirmwareCopyright.size() + 16);
 
+	// Embed-mode re-init: restore the controller to its power-on state.
+	// A previous guest run can leave the command state machine or the
+	// port-delay timer engaged, deadlocking the next run's POST / DOS
+	// mouse driver (observed as MOUSE.COM hanging inside AUTOEXEC.BAT).
+	config_byte.data          = 0b0000'0111;
+	status_byte.data          = 0b0001'1100;
+	is_data_from_kbd          = false;
+	data_byte                 = 0;
+	is_diagnostic_dump        = false;
+	delay_running             = false;
+	delay_expired             = true;
+	should_skip_device_notify = false;
+	current_command           = Command::None;
+	PIC_RemoveEvents(delay_handler);
+
 	IO_RegisterReadHandler(port_num_i8042_data,
 	                       read_data_port,
 	                       io_width_t::dword);

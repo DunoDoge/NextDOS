@@ -2845,6 +2845,17 @@ bool MOUSEDOS_StartDriver(const bool force_low_memory)
 
 void MOUSEDOS_Init()
 {
+	// Embed-mode re-init: the previous run's DOS TSR area is long gone
+	// with its memory; clear the started flag or the next run's
+	// MOUSE.COM takes the 'already installed' path and deadlocks the
+	// autoexec batch. Also forget the previous run's driver-info DOS
+	// memory (prepare_driver_info asserts if it is still set).
+	state_segment.reset();
+	info_segment          = 0;
+	info_offset_ini_file  = 0;
+	info_offset_version   = 0;
+	info_offset_copyright = 0;
+
 	prepare_driver_info();
 
 	// Allocate callbacks
