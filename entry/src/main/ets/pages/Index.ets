@@ -20,7 +20,9 @@ const IS_DESKTOP: boolean = deviceInfo.deviceType === '2in1';
 struct Index {
   @State booted: boolean = false;
   @State paused: boolean = false;
-  @State keyboardVisible: boolean = true;
+  // The on-screen keyboard stays hidden until shown from the settings sheet
+  // (touch) or the title bar (2in1).
+  @State keyboardVisible: boolean = false;
   @State barExpanded: boolean = true;
   @State showSettings: boolean = false;
   @State folderMounted: boolean = false;
