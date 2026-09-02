@@ -55,6 +55,9 @@ struct Index {
       this.mainWindow.on('windowTitleButtonRectChange', () => {
         this.updateTitleButtonRect();
       });
+      this.mainWindow.on('windowSizeChange', () => {
+        this.updateTitleButtonRect();
+      });
     } catch (error) {
       hilog.error(0x0000, TAG, 'get main window failed: %{public}s', JSON.stringify(error));
     }
@@ -67,7 +70,12 @@ struct Index {
     try {
       const rect = this.mainWindow.getTitleButtonRect();
       this.threeButtonWidth = this.getUIContext().px2vp(rect.width);
-      if (rect.height > 0) {
+      // Prefer the standard title bar height (37-112vp) so the row does not
+      // hug the window top; fall back to the three-button rect height.
+      const decorHeight = this.mainWindow.getWindowDecorHeight();
+      if (decorHeight >= 37 && decorHeight <= 112) {
+        this.titleBarHeight = decorHeight;
+      } else if (rect.height > 0) {
         this.titleBarHeight = this.getUIContext().px2vp(rect.height);
       }
     } catch (error) {
@@ -136,19 +144,24 @@ struct Index {
   }
 
   /**
-   * 2in1 title row, drawn in place of the hidden system title bar. Symbol
-   * buttons are right-aligned and reserve the system three-button rect, so
-   * they sit immediately left of minimize/maximize/close. Inlined buttons
-   * (no @Builder wrapper): @Builder by-value params are captured once and
-   * don't refresh when the @State icon changes.
+   * 2in1 title row, drawn in place of the hidden system title bar. The app
+   * icon and name sit top-left; symbol buttons are right-aligned and reserve
+   * the system three-button rect, so they sit left of minimize/maximize/close
+   * without overlapping. Inlined buttons (no @Builder wrapper): @Builder
+   * by-value params are captured once and don't refresh when the @State icon
+   * changes.
    */
   @Builder
   desktopTitleBar() {
     Row() {
+      Image($r('app.media.icon'))
+        .width(20)
+        .height(20)
+        .borderRadius(4)
       Text('NextDOS')
         .fontSize(15)
-        .fontWeight(FontWeight.Bold)
         .fontColor('#FFFFFF')
+        .margin({ left: 8 })
       Blank()
       Row({ space: 4 }) {
         Column() {
@@ -209,7 +222,9 @@ struct Index {
           this.keyboardVisible = !this.keyboardVisible;
         })
       }
-      .margin({ right: this.threeButtonWidth + 4 })
+      // getTitleButtonRect reports the naked glyph box; the hover plates of
+      // the three buttons extend ~40vp further left, so pad the reserve.
+      .margin({ right: this.threeButtonWidth + 48 })
     }
     .width('100%')
     .height(this.titleBarHeight)
@@ -218,16 +233,31 @@ struct Index {
   }
 
   // Settings half-modal sheet: hosts the emulator controls that used to live
-  // in the removed self-drawn title bar (touch devices).
+  // in the removed self-drawn title bar (touch devices). Custom white close
+  // button — the system one is not visible on the dark background.
   @Builder
   settingsPanel() {
     Column() {
-      Text('设置')
-        .fontSize(20)
-        .fontWeight(FontWeight.Bold)
-        .fontColor('#FFFFFF')
-        .width('100%')
-        .margin({ top: 4, bottom: 8 })
+      Row() {
+        Text('设置')
+          .fontSize(20)
+          .fontWeight(FontWeight.Bold)
+          .fontColor('#FFFFFF')
+        Blank()
+        Column() {
+          SymbolGlyph($r('sys.symbol.xmark'))
+            .fontSize(18)
+            .fontColor(['#FFFFFF'])
+        }
+        .width(32)
+        .height(32)
+        .justifyContent(FlexAlign.Center)
+        .onClick(() => {
+          this.showSettings = false;
+        })
+      }
+      .width('100%')
+      .margin({ bottom: 8 })
 
       Row({ space: 12 }) {
         SymbolGlyph(this.paused ? $r('sys.symbol.play_fill') : $r('sys.symbol.pause'))
@@ -298,7 +328,7 @@ struct Index {
       })
     }
     .width('100%')
-    .padding({ left: 16, right: 16, bottom: 16 })
+    .padding({ left: 16, right: 16, top: 16, bottom: 16 })
   }
 
   build() {
@@ -307,14 +337,21 @@ struct Index {
         this.desktopTitleBar()
       }
 
-      EmulatorScreen({ emu: this.emu })
-        .layoutWeight(1)
+      // The on-screen keyboard floats translucently over the DOS screen so it
+      // never squeezes the emulator canvas; its toggle lives in the settings
+      // sheet (touch) or the title bar (2in1).
+      Stack({ alignContent: Alignment.Bottom }) {
+        EmulatorScreen({ emu: this.emu })
+        if (this.keyboardVisible) {
+          SoftKeyboard({ emu: this.emu })
+            .opacity(0.8)
+        }
+      }
+      .layoutWeight(1)
 
       if (!IS_DESKTOP) {
+        // Collapse/expand only affects the Termux control bar.
         if (this.barExpanded) {
-          if (this.keyboardVisible) {
-            SoftKeyboard({ emu: this.emu })
-          }
           ControlKeyBar({
             emu: this.emu,
             onOpenSettings: () => {
@@ -355,8 +392,7 @@ struct Index {
     })
     .bindSheet($$this.showSettings, this.settingsPanel(), {
       height: SheetSize.FIT_CONTENT,
-      backgroundColor: '#1E1E22',
-      showClose: true
+      backgroundColor: '#1E1E22'
     })
   }
 }
