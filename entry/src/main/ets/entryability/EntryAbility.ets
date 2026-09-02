@@ -42,12 +42,20 @@ export default class EntryAbility extends UIAbility {
    */
   private applyDesktopTitleBar(windowStage: window.WindowStage): void {
     try {
-      const mainWindow = windowStage.getMainWindowSync();
-      mainWindow.setWindowDecorVisible(false);
-      // Active title bar black, slightly muted when the window loses focus.
-      mainWindow.setWindowContainerColor('#FF000000', '#FF1A1A1A');
+      windowStage.getMainWindowSync().setWindowDecorVisible(false);
     } catch (err) {
-      hilog.error(DOMAIN, 'testTag', 'Failed to apply 2in1 title bar. Cause: %{public}s', JSON.stringify(err));
+      hilog.error(DOMAIN, 'testTag', 'Failed to hide window decor. Cause: %{public}s', JSON.stringify(err));
+    }
+    try {
+      // Light three-button glyphs so they stay visible on the black title bar.
+      // Note: setWindowContainerColor needs a system permission, the black
+      // background comes from the page's own title row instead.
+      const buttonStyle: window.DecorButtonStyle = {
+        colorMode: ConfigurationConstant.ColorMode.COLOR_MODE_DARK
+      };
+      windowStage.getMainWindowSync().setDecorButtonStyle(buttonStyle);
+    } catch (err) {
+      hilog.error(DOMAIN, 'testTag', 'Failed to set decor button style. Cause: %{public}s', JSON.stringify(err));
     }
   }
 
