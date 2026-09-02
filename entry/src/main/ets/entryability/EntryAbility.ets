@@ -1,4 +1,5 @@
 import { AbilityConstant, ConfigurationConstant, UIAbility, Want } from '@kit.AbilityKit';
+import { deviceInfo } from '@kit.BasicServicesKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { window } from '@kit.ArkUI';
 
@@ -28,7 +29,26 @@ export default class EntryAbility extends UIAbility {
         return;
       }
       hilog.info(DOMAIN, 'testTag', 'Succeeded in loading the content.');
+      if (deviceInfo.deviceType === '2in1') {
+        this.applyDesktopTitleBar(windowStage);
+      }
     });
+  }
+
+  /**
+   * 2in1: hide the system title bar so the page extends into it, leaving the
+   * window three buttons overlaid at the top-right; the app draws its own
+   * black title row beside them (Index.desktopTitleBar).
+   */
+  private applyDesktopTitleBar(windowStage: window.WindowStage): void {
+    try {
+      const mainWindow = windowStage.getMainWindowSync();
+      mainWindow.setWindowDecorVisible(false);
+      // Active title bar black, slightly muted when the window loses focus.
+      mainWindow.setWindowContainerColor('#FF000000', '#FF1A1A1A');
+    } catch (err) {
+      hilog.error(DOMAIN, 'testTag', 'Failed to apply 2in1 title bar. Cause: %{public}s', JSON.stringify(err));
+    }
   }
 
   onWindowStageDestroy(): void {
