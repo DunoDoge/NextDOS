@@ -109,6 +109,7 @@ struct Index {
       return;
     }
     if (!DosKeyMap.isInjectable(event.keyCode)) {
+      hilog.info(0x0000, TAG, 'key dropped: %{public}d', event.keyCode);
       return;
     }
     this.emu.injectKey(event.keyCode, event.type === KeyType.Down);
