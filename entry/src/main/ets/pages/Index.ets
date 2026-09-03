@@ -225,8 +225,9 @@ struct Index {
         })
       }
       // getTitleButtonRect reports the naked glyph box; the hover plates of
-      // the three buttons extend ~40vp further left, so pad the reserve.
-      .margin({ right: this.threeButtonWidth + 48 })
+      // the three buttons extend ~40vp further left. Pad past the plates so a
+      // visible gap stays between the app symbols and the system buttons.
+      .margin({ right: this.threeButtonWidth + 72 })
     }
     .width('100%')
     .height(this.titleBarHeight)
