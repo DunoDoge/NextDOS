@@ -51,10 +51,13 @@ export class DosKeyMap {
       case KeyCode.KEYCODE_CAPS_LOCK:
       case KeyCode.KEYCODE_SCROLL_LOCK:
       case KeyCode.KEYCODE_NUM_LOCK:
+      case KeyCode.KEYCODE_BREAK:
       // Punctuation.
       case KeyCode.KEYCODE_GRAVE:
       case KeyCode.KEYCODE_MINUS:
       case KeyCode.KEYCODE_EQUALS:
+      case KeyCode.KEYCODE_COMMA:
+      case KeyCode.KEYCODE_PERIOD:
       case KeyCode.KEYCODE_LEFT_BRACKET:
       case KeyCode.KEYCODE_RIGHT_BRACKET:
       case KeyCode.KEYCODE_BACKSLASH:
