@@ -80,8 +80,8 @@ export class DosEmulator {
 
   /**
    * Mounts a host folder as the emulated C: drive by typing the DOS
-   * `mount` command into the RUNNING guest — no engine restart. The
-   * config file is still regenerated so a later engine restart re-mounts.
+   * `mount` and `c:` commands into the RUNNING guest — no engine restart.
+   * The config file is still regenerated so a later engine restart re-mounts.
    */
   async mountFolder(dir: string): Promise<void> {
     const wasRunning: boolean = this.running;
@@ -92,9 +92,10 @@ export class DosEmulator {
       this.start();
       return;
     }
-    // No automatic `c:` drive switch is injected; the user switches
-    // manually in the guest.
     await this.typeIntoGuest('mount c ' + dir + '\r');
+    // Delay so the guest finishes the mount before the `c:` keystrokes arrive.
+    await DosEmulator.sleepMs(300);
+    await this.typeIntoGuest('c:\r');
   }
 
   /** Unmounts C: by typing `mount -u c` into the running guest. */
@@ -221,6 +222,8 @@ export class DosEmulator {
         return KeyCode.KEYCODE_PERIOD;
       case '-':
         return KeyCode.KEYCODE_MINUS;
+      case ':':
+        return KeyCode.KEYCODE_SEMICOLON;
       case ' ':
         return KeyCode.KEYCODE_SPACE;
       case '\r':
@@ -254,7 +257,7 @@ export class DosEmulator {
       if (keyCode < 0) {
         continue;
       }
-      const withShift: boolean = ch >= 'A' && ch <= 'Z';
+      const withShift: boolean = (ch >= 'A' && ch <= 'Z') || ch === ':';
       if (withShift) {
         testNapi.injectKey(KeyCode.KEYCODE_SHIFT_LEFT, true, true);
         await DosEmulator.sleepMs(30);
