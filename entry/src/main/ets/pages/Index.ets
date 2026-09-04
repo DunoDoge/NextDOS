@@ -474,8 +474,9 @@ struct Index {
    * control bar (expanded) or the settings/expand corner (collapsed).
    * HitTestMode.None lets touches on the strips' empty areas fall through to
    * the canvas (DOS mouse) while keys and the gear keep their own handlers;
-   * the strip paints translucent black so the DOS screen stays readable
-   * underneath while the keys render full-brightness white.
+   * the expanded strip paints translucent black so the DOS screen stays
+   * readable underneath while the keys render full-brightness white, the
+   * collapsed corner is fully transparent.
    */
   @Builder
   controlOverlay() {
@@ -509,6 +510,7 @@ struct Index {
       } else {
         // Collapsed: keep the settings entry above the expand button in the
         // same bottom-right corner, popup still anchored beside the gear.
+        // Fully transparent so the collapsed corner floats on the canvas.
         Row() {
           Blank()
           Column({ space: 2 }) {
@@ -522,7 +524,7 @@ struct Index {
         }
         .width('100%')
         .padding(6)
-        .backgroundColor('#CC000000')
+        .backgroundColor(Color.Transparent)
         .hitTestBehavior(HitTestMode.None)
       }
     }
