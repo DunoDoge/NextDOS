@@ -439,14 +439,12 @@ struct Index {
   gearMenuButton() {
     Column() {
       SymbolGlyph($r('sys.symbol.gearshape'))
-        .fontSize(20)
-        .fontColor(['#DDDDDD'])
+        .fontSize(22)
+        .fontColor(['#E6E6E6'])
     }
     .width('100%')
-    .height(38)
+    .height(40)
     .justifyContent(FlexAlign.Center)
-    .backgroundColor('#2A2A2E')
-    .borderRadius(4)
     .onClick(() => {
       this.showMenu = !this.showMenu;
     })
@@ -472,11 +470,12 @@ struct Index {
   }
 
   /**
-   * Bottom overlay column floating over the canvas: Termux control bar
-   * (expanded) or the settings/expand corner (collapsed). HitTestMode.None
-   * lets touches on the strips' empty areas fall through to the canvas (DOS
-   * mouse) while keys and the gear keep their own handlers; the bar floats
-   * at 0.8 opacity so the DOS screen stays readable underneath.
+   * Bottom overlay column floating over the canvas: HiSH-style borderless
+   * control bar (expanded) or the settings/expand corner (collapsed).
+   * HitTestMode.None lets touches on the strips' empty areas fall through to
+   * the canvas (DOS mouse) while keys and the gear keep their own handlers;
+   * the strip paints translucent black so the DOS screen stays readable
+   * underneath while the keys render full-brightness white.
    */
   @Builder
   controlOverlay() {
@@ -491,14 +490,12 @@ struct Index {
 
             Column() {
               SymbolGlyph($r('sys.symbol.chevron_down'))
-                .fontSize(20)
-                .fontColor(['#DDDDDD'])
+                .fontSize(22)
+                .fontColor(['#E6E6E6'])
             }
             .width('100%')
-            .height(38)
+            .height(40)
             .justifyContent(FlexAlign.Center)
-            .backgroundColor('#2A2A2E')
-            .borderRadius(4)
             .onClick(() => {
               this.barExpanded = false;
             })
@@ -507,8 +504,7 @@ struct Index {
         }
         .width('100%')
         .padding(6)
-        .backgroundColor('#18181C')
-        .opacity(0.8)
+        .backgroundColor('#CC000000')
         .hitTestBehavior(HitTestMode.None)
       } else {
         // Collapsed: keep the settings entry above the expand button in the
@@ -526,8 +522,7 @@ struct Index {
         }
         .width('100%')
         .padding(6)
-        .backgroundColor('#18181C')
-        .opacity(0.8)
+        .backgroundColor('#CC000000')
         .hitTestBehavior(HitTestMode.None)
       }
     }
