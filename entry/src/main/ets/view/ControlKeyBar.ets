@@ -9,31 +9,33 @@ export class ControlKeyDef {
 }
 
 /**
- * Icon button of the collapsed control bar's bottom-right corner (expand
- * chip). Static icon + handler only, so by-value @Builder params are safe.
+ * Borderless corner glyph cell (collapse/expand chevron) matching the bare
+ * text key style: no chip background, the strip behind it is the surface.
+ * Static icon + handler only, so by-value @Builder params are safe.
  */
 @Builder
 export function controlCornerButton(icon: Resource, action: () => void) {
   Column() {
     SymbolGlyph(icon)
-      .fontSize(20)
-      .fontColor(['#DDDDDD'])
+      .fontSize(22)
+      .fontColor(['#E6E6E6'])
   }
   .width('100%')
-  .height(38)
+  .height(40)
   .justifyContent(FlexAlign.Center)
-  .backgroundColor('#2A2A2E')
-  .borderRadius(4)
   .onClick(() => {
     action();
   })
 }
 
 /**
- * Termux-style control key bar pinned to the bottom edge on touch devices.
- * Keys deliver plain down/up events like a hardware keyboard; Ctrl/Alt are
- * sticky latches so DOS can still be driven without one. Text input itself
- * goes through the system input method (Index.imeLayer).
+ * HiSH-style borderless control key bar pinned to the bottom edge on touch
+ * devices: bare text keys on the strip, a small edit/modifier cluster on the
+ * left and the navigation cluster on the right, Blank soaking up the slack
+ * (reference layout: ESC ALT DEL | PGUP HOME ↑ END / TAB CTRL INS | PGDN
+ * ← ↓ →). Keys deliver plain down/up events like a hardware keyboard;
+ * Ctrl/Alt are sticky latches so DOS can still be driven without one.
+ * Text input itself goes through the system input method (Index.imeLayer).
  * The settings/collapse corner is drawn by Index (page) so its settings
  * popup can anchor beside the gear button.
  */
@@ -45,27 +47,34 @@ export struct ControlKeyBar {
   emu: DosEmulator = new DosEmulator();
   @State ctrlOn: boolean = false;
   @State altOn: boolean = false;
-  private row1: ControlKeyDef[] = [];
-  private row2: ControlKeyDef[] = [];
+  @State pressedId: string = '';
+  private left1: ControlKeyDef[] = [];
+  private right1: ControlKeyDef[] = [];
+  private left2: ControlKeyDef[] = [];
+  private right2: ControlKeyDef[] = [];
 
   aboutToAppear(): void {
-    this.row1 = [
-      this.mk('esc', 'Esc', KeyCode.KEYCODE_ESCAPE, false),
-      this.mk('home', 'Home', KeyCode.KEYCODE_MOVE_HOME, false),
-      this.mk('up', '↑', KeyCode.KEYCODE_DPAD_UP, false),
-      this.mk('end', 'End', KeyCode.KEYCODE_MOVE_END, false),
-      this.mk('pgup', 'PgUp', KeyCode.KEYCODE_PAGE_UP, false),
-      this.mk('del', 'Del', KeyCode.KEYCODE_FORWARD_DEL, false)
+    this.left1 = [
+      this.mk('esc', 'ESC', KeyCode.KEYCODE_ESCAPE, false),
+      this.mk('alt', 'ALT', KeyCode.KEYCODE_ALT_LEFT, true),
+      this.mk('del', 'DEL', KeyCode.KEYCODE_FORWARD_DEL, false)
     ];
-    this.row2 = [
-      this.mk('tab', 'Tab', KeyCode.KEYCODE_TAB, false),
-      this.mk('ctrl', 'Ctrl', KeyCode.KEYCODE_CTRL_LEFT, true),
-      this.mk('alt', 'Alt', KeyCode.KEYCODE_ALT_LEFT, true),
+    this.right1 = [
+      this.mk('pgup', 'PGUP', KeyCode.KEYCODE_PAGE_UP, false),
+      this.mk('home', 'HOME', KeyCode.KEYCODE_MOVE_HOME, false),
+      this.mk('up', '↑', KeyCode.KEYCODE_DPAD_UP, false),
+      this.mk('end', 'END', KeyCode.KEYCODE_MOVE_END, false)
+    ];
+    this.left2 = [
+      this.mk('tab', 'TAB', KeyCode.KEYCODE_TAB, false),
+      this.mk('ctrl', 'CTRL', KeyCode.KEYCODE_CTRL_LEFT, true),
+      this.mk('ins', 'INS', KeyCode.KEYCODE_INSERT, false)
+    ];
+    this.right2 = [
+      this.mk('pgdn', 'PGDN', KeyCode.KEYCODE_PAGE_DOWN, false),
       this.mk('left', '←', KeyCode.KEYCODE_DPAD_LEFT, false),
       this.mk('down', '↓', KeyCode.KEYCODE_DPAD_DOWN, false),
-      this.mk('right', '→', KeyCode.KEYCODE_DPAD_RIGHT, false),
-      this.mk('pgdn', 'PgDn', KeyCode.KEYCODE_PAGE_DOWN, false),
-      this.mk('ins', 'Ins', KeyCode.KEYCODE_INSERT, false)
+      this.mk('right', '→', KeyCode.KEYCODE_DPAD_RIGHT, false)
     ];
   }
 
@@ -126,46 +135,45 @@ export struct ControlKeyBar {
   @Builder
   keyButton(key: ControlKeyDef) {
     Text(key.label)
-      .width('100%')
+      .width(48)
       .height('100%')
       .textAlign(TextAlign.Center)
-      .fontSize(12)
-      .fontColor(this.isLit(key) ? '#FFD34D' : '#DDDDDD')
-      .backgroundColor(this.isLit(key) ? '#3A3A2A' : '#2A2A2E')
-      .borderRadius(4)
-      .layoutWeight(1)
+      .fontSize(16)
+      .fontColor(this.isLit(key) ? '#FFD34D' : '#E6E6E6')
+      .opacity(this.pressedId === key.id ? 0.4 : 1)
       .onTouch((event: TouchEvent) => {
         if (event.type === TouchType.Down) {
+          this.pressedId = key.id;
           this.pressKey(key);
         } else if (event.type === TouchType.Up || event.type === TouchType.Cancel) {
+          this.pressedId = '';
           this.releaseKey(key);
         }
       })
   }
 
-  build() {
-    Row({ space: 4 }) {
-      Column({ space: 2 }) {
-        Row({ space: 2 }) {
-          ForEach(this.row1, (key: ControlKeyDef) => {
-            this.keyButton(key)
-          }, (key: ControlKeyDef) => key.id)
-        }
-        .width('100%')
-        .height(38)
+  @Builder
+  keyRow(left: ControlKeyDef[], right: ControlKeyDef[]) {
+    Row({ space: 8 }) {
+      ForEach(left, (key: ControlKeyDef) => {
+        this.keyButton(key)
+      }, (key: ControlKeyDef) => key.id)
 
-        Row({ space: 2 }) {
-          ForEach(this.row2, (key: ControlKeyDef) => {
-            this.keyButton(key)
-          }, (key: ControlKeyDef) => key.id)
-        }
-        .width('100%')
-        .height(38)
-      }
-      .width('100%')
+      Blank()
+
+      ForEach(right, (key: ControlKeyDef) => {
+        this.keyButton(key)
+      }, (key: ControlKeyDef) => key.id)
     }
     .width('100%')
-    .padding(6)
-    .backgroundColor('#18181C')
+    .height(40)
+  }
+
+  build() {
+    Column({ space: 2 }) {
+      this.keyRow(this.left1, this.right1)
+      this.keyRow(this.left2, this.right2)
+    }
+    .width('100%')
   }
 }
