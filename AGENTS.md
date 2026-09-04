@@ -12,7 +12,7 @@ entry/src/main/
     pages/Index.ets          # the only @Entry page; owns boot, state, device branching,
                              #   IME text input (imeLayer: invisible TextArea + tap-to-focus)
     view/                    # UI components: EmulatorScreen, ControlKeyBar (touch),
-                             #   SettingsSheet (About: version/repo/license),
+                             #   SettingsSheet (About: version/repo/privacy/license),
                              #   LicenseSheet (license sub-page over the sheet)
     model/                   # non-UI: DosEmulator (NAPI controller), DosKeyMap, MountFolder
     entryability/            # EntryAbility: window setup (immersive, orientation, decor)
@@ -83,6 +83,15 @@ the license for users. Keep both, plus the in-app `LicenseSheet`, in sync with
   never restarts the engine — `DosEmulator.mountFolder` types
   `mount c <dir>` + `c:` into the *running* guest via `typeIntoGuest`
   (config is regenerated only so future boots re-mount). Keep it that way.
+- **Privacy consent is the AGC standardized dialog.** The app uses AGC
+  standardized privacy hosting (`module.json5` metadata `appgallery_privacy_*`);
+  the system itself pops the standardized privacy dialog on first launch.
+  Never render a self-drawn privacy dialog — AppGallery review rejects hosted
+  apps that do. `Index.initPrivacy` gates engine boot on the `privacyManager`
+  signing state (`@kit.AppGalleryKit`; only full-mode agreement counts),
+  pulls the dialog via `requestAppPrivacyConsent` when unsigned, and exits
+  after a refusal. Devices without the service (emulator → error
+  1006700003) log and boot anyway so development keeps working.
 - **Key injection whitelist.** `ohos_input.cpp` drops unknown HarmonyOS
   keyCodes; when a key doesn't reach the guest, check the whitelist there
   first, and `DosEmulator.charToKeyCode` for typed-text mapping (shift is
@@ -114,7 +123,8 @@ the license for users. Keep both, plus the in-app `LicenseSheet`, in sync with
   and persist via a small `AppSettings`-style store; seed AppStorage in
   `aboutToAppear` before components read the links. (No live-edited settings
   exist right now — the sheet currently holds only the About group:
-  version, repository link, and the license sub-page; the pattern applies
+  version, repository link, privacy policy link, and the license sub-page;
+  the pattern applies
   when adding some. The old keyboard visibility/opacity settings died with
   the in-app keyboard.)
 

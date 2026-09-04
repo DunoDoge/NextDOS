@@ -5,6 +5,10 @@ import { LicenseSheet } from './LicenseSheet';
 
 const TAG = 'NextDOS';
 const REPO_URL = 'https://github.com/DunoDoge/NextDOS';
+// Hosted on AGC 标准化隐私声明托管; also wired into module.json5 metadata for
+// the standardized first-launch dialog.
+const PRIVACY_URL: string =
+  'https://agreement-drcn.hispace.dbankcloud.cn/index.html?lang=zh&agreementId=2032214202961163328';
 
 /**
  * Settings content hosted inside the half-modal sheet bound in Index. 2in1 and
@@ -14,8 +18,9 @@ const REPO_URL = 'https://github.com/DunoDoge/NextDOS';
  * content is ours. Closing stays owned by Index (its onDisappear resets the
  * show state); the X button just calls onClose, which writes the same state.
  *
- * Content is grouped into flat cards under 关于. The repository row hands the
- * URL to the system browser via openLink. 开源许可 opens the full license
+ * Content is grouped into flat cards under 关于. The repository and 隐私政策
+ * rows hand their URLs to the system browser via openLink. 开源许可 opens the
+ * full license
  * sub-page as a full modal stacked on top of this sheet (bindContentCover;
  * a later modal covers an open sheet, sheet-in-sheet has no documented
  * guarantee). isShow flags are one-way into the modal APIs: both this
@@ -41,6 +46,13 @@ export struct SettingsSheet {
     const context = getContext(this) as common.UIAbilityContext;
     context.openLink(REPO_URL).catch((error: BusinessError) => {
       hilog.error(0x0000, TAG, 'open repository link failed: %{public}s', error.message);
+    });
+  }
+
+  private openPrivacyPolicy(): void {
+    const context = getContext(this) as common.UIAbilityContext;
+    context.openLink(PRIVACY_URL).catch((error: BusinessError) => {
+      hilog.error(0x0000, TAG, 'open privacy policy link failed: %{public}s', error.message);
     });
   }
 
@@ -123,6 +135,32 @@ export struct SettingsSheet {
         .hoverEffect(HoverEffect.Highlight)
         .onClick(() => {
           this.openRepository();
+        })
+
+        Divider()
+          .strokeWidth(0.5)
+          .color('#FFFFFF14')
+          .margin({ left: 16 })
+
+        Row() {
+          Text('隐私政策')
+            .fontSize(16)
+            .fontColor('#FFFFFF')
+            .layoutWeight(1)
+          Text('查看')
+            .fontSize(14)
+            .fontColor('#DDDDDD')
+          SymbolGlyph($r('sys.symbol.arrow_up_right'))
+            .fontSize(13)
+            .fontColor(['#8A8A92'])
+            .margin({ left: 4 })
+        }
+        .width('100%')
+        .height(48)
+        .padding({ left: 16, right: 16 })
+        .hoverEffect(HoverEffect.Highlight)
+        .onClick(() => {
+          this.openPrivacyPolicy();
         })
 
         Divider()

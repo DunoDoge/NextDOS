@@ -3,6 +3,7 @@ import { common } from '@kit.AbilityKit';
 import { BusinessError, deviceInfo } from '@kit.BasicServicesKit';
 import { KeyboardAvoidMode, window } from '@kit.ArkUI';
 import { KeyCode } from '@kit.InputKit';
+import { privacyManager } from '@kit.AppGalleryKit';
 import { DosEmulator } from '../model/DosEmulator';
 import { DosKeyMap } from '../model/DosKeyMap';
 import { MountFolder } from '../model/MountFolder';
@@ -52,7 +53,7 @@ struct Index {
       // panning the whole DOS view off-screen.
       this.getUIContext().setKeyboardAvoidMode(KeyboardAvoidMode.RESIZE);
     }
-    this.boot();
+    this.initPrivacy();
     if (IS_DESKTOP) {
       this.trackTitleButtons();
     }
@@ -64,6 +65,65 @@ struct Index {
     this.emu.start();
     this.booted = true;
     hilog.info(0x0000, TAG, 'NextDOS booted');
+  }
+
+  /**
+   * Privacy gate before the engine starts: consent lives in the AGC
+   * standardized privacy dialog (module.json5 metadata appgallery_privacy_*),
+   * never in a self-drawn dialog — AppGallery review rejects hosted apps that
+   * render their own. Boot waits on the signing state the system manages.
+   */
+  private async initPrivacy(): Promise<void> {
+    if (this.isPrivacySigned()) {
+      this.boot();
+      return;
+    }
+    const ctx = getContext(this) as common.UIAbilityContext;
+    try {
+      const consent: privacyManager.ConsentResult = await privacyManager.requestAppPrivacyConsent(ctx);
+      if (this.isPrivacyAgreed(consent.results)) {
+        this.boot();
+      } else {
+        // Refusal must not hold the app hostage: notify, then exit normally.
+        this.showToast('未同意隐私政策，应用即将退出');
+        setTimeout(() => {
+          ctx.terminateSelf((err: BusinessError) => {
+            if (err.code) {
+              hilog.error(0x0000, TAG, 'terminateSelf failed: %{public}d', err.code);
+            }
+          });
+        }, 1600);
+      }
+    } catch (error) {
+      // No privacy manager service (emulator, or hosting unreachable):
+      // boot anyway so development keeps working; store installs always get
+      // the system dialog because the hosted service is mandatory there.
+      const err = error as BusinessError;
+      hilog.error(0x0000, TAG, 'privacy service unavailable (%{public}d): %{public}s, booting anyway', err.code, err.message);
+      this.boot();
+    }
+  }
+
+  // Full-mode agreement on the hosted privacy statement; DISAGREED and the
+  // re-sign-required state (agreement updated) both count as unsigned.
+  private isPrivacyAgreed(results: privacyManager.AppPrivacyResult[]): boolean {
+    for (let i = 0; i < results.length; i++) {
+      if (results[i].type === privacyManager.AppPrivacyType.PRIVACY_AGREEMENT &&
+        results[i].result === privacyManager.AppPrivacyResultType.FULL_MODE_AGREED) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  private isPrivacySigned(): boolean {
+    try {
+      return this.isPrivacyAgreed(privacyManager.getAppPrivacyResult());
+    } catch (error) {
+      // Service missing (emulator): treated as unsigned; the consent request
+      // then fails the same way and boots with a log.
+      return false;
+    }
   }
 
   private async trackTitleButtons(): Promise<void> {
