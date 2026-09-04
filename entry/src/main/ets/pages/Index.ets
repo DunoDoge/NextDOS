@@ -5,9 +5,11 @@ import { window } from '@kit.ArkUI';
 import { DosEmulator } from '../model/DosEmulator';
 import { DosKeyMap } from '../model/DosKeyMap';
 import { MountFolder } from '../model/MountFolder';
+import { AppSettings } from '../model/AppSettings';
 import { EmulatorScreen } from '../view/EmulatorScreen';
 import { SoftKeyboard } from '../view/SoftKeyboard';
 import { ControlKeyBar, controlCornerButton } from '../view/ControlKeyBar';
+import { SettingsSheet } from '../view/SettingsSheet';
 
 const TAG: string = 'NextDOS';
 // 2in1 has a system window title bar: app actions become symbols beside the
@@ -20,10 +22,16 @@ const IS_DESKTOP: boolean = deviceInfo.deviceType === '2in1';
 struct Index {
   @State booted: boolean = false;
   @State paused: boolean = false;
-  // The on-screen keyboard stays hidden until shown from the settings sheet
-  // (touch) or the title bar (2in1).
-  @State keyboardVisible: boolean = false;
+  // The on-screen keyboard stays hidden until shown from the quick menu
+  // (touch) or the title bar (2in1); the value and opacity live in AppStorage
+  // so the settings sheet edits them live and AppSettings persists them.
+  @StorageLink('keyboardVisible') keyboardVisible: boolean = false;
+  @StorageLink('keyboardOpacity') keyboardOpacity: number = 0.8;
   @State barExpanded: boolean = true;
+  // Quick-menu popup anchored beside the settings entry button (touch).
+  @State showMenu: boolean = false;
+  // Settings half-modal sheet, shared by every device; one-way isShow with
+  // onDisappear write-back (drag/ESC close never writes a one-way variable).
   @State showSettings: boolean = false;
   @State folderMounted: boolean = false;
   @State mountBusy: boolean = false;
@@ -36,6 +44,11 @@ struct Index {
   private mainWindow: window.Window | null = null;
 
   aboutToAppear(): void {
+    // Pull persisted settings into AppStorage before the links are read
+    // elsewhere; setOrCreate overwrites the defaults the @StorageLink wrote.
+    const ctx = getContext(this) as common.UIAbilityContext;
+    AppStorage.setOrCreate('keyboardVisible', AppSettings.loadKeyboardVisible(ctx));
+    AppStorage.setOrCreate('keyboardOpacity', AppSettings.loadKeyboardOpacity(ctx));
     this.boot();
     if (IS_DESKTOP) {
       this.trackTitleButtons();
@@ -146,6 +159,28 @@ struct Index {
     this.getUIContext().getPromptAction().showToast({ message: message });
   }
 
+  private persistKeyboard(): void {
+    AppSettings.save(getContext(this) as common.UIAbilityContext, this.keyboardVisible, this.keyboardOpacity);
+  }
+
+  private toggleKeyboard(): void {
+    this.keyboardVisible = !this.keyboardVisible;
+    this.persistKeyboard();
+  }
+
+  private openSettings(): void {
+    this.showSettings = true;
+  }
+
+  @Builder
+  settingsSheet() {
+    SettingsSheet({
+      onClose: () => {
+        this.showSettings = false;
+      }
+    })
+  }
+
   /**
    * 2in1 title row, drawn in place of the hidden system title bar. The app
    * icon and name sit top-left; symbol buttons are right-aligned and reserve
@@ -222,7 +257,23 @@ struct Index {
         .borderRadius(6)
         .hoverEffect(HoverEffect.Highlight)
         .onClick(() => {
-          this.keyboardVisible = !this.keyboardVisible;
+          this.toggleKeyboard();
+        })
+
+        // Rightmost app symbol: the settings entry, opens the shared
+        // half-modal settings sheet.
+        Column() {
+          SymbolGlyph($r('sys.symbol.gearshape'))
+            .fontSize(18)
+            .fontColor(['#FFFFFF'])
+        }
+        .width(36)
+        .height(30)
+        .justifyContent(FlexAlign.Center)
+        .borderRadius(6)
+        .hoverEffect(HoverEffect.Highlight)
+        .onClick(() => {
+          this.openSettings();
         })
       }
       // getTitleButtonRect reports the naked glyph box; the hover plates of
@@ -236,33 +287,12 @@ struct Index {
     .backgroundColor('#000000')
   }
 
-  // Settings half-modal sheet: hosts the emulator controls that used to live
-  // in the removed self-drawn title bar (touch devices). Custom white close
-  // button — the system one is not visible on the dark background.
+  // Quick-menu popup anchored beside the corner gear on touch devices:
+  // pause / reset / mount / keyboard quick controls, with the settings sheet
+  // entry as the closing row.
   @Builder
-  settingsPanel() {
+  quickMenu() {
     Column() {
-      Row() {
-        Text('设置')
-          .fontSize(20)
-          .fontWeight(FontWeight.Bold)
-          .fontColor('#FFFFFF')
-        Blank()
-        Column() {
-          SymbolGlyph($r('sys.symbol.xmark'))
-            .fontSize(18)
-            .fontColor(['#FFFFFF'])
-        }
-        .width(32)
-        .height(32)
-        .justifyContent(FlexAlign.Center)
-        .onClick(() => {
-          this.showSettings = false;
-        })
-      }
-      .width('100%')
-      .margin({ bottom: 8 })
-
       Row({ space: 12 }) {
         SymbolGlyph(this.paused ? $r('sys.symbol.play_fill') : $r('sys.symbol.pause'))
           .fontSize(22)
@@ -273,7 +303,7 @@ struct Index {
           .layoutWeight(1)
       }
       .width('100%')
-      .height(48)
+      .height(44)
       .onClick(() => {
         this.emu.togglePause();
         this.paused = this.emu.isPaused();
@@ -291,7 +321,7 @@ struct Index {
           .layoutWeight(1)
       }
       .width('100%')
-      .height(48)
+      .height(44)
       .onClick(() => {
         this.emu.reset();
         this.paused = false;
@@ -309,7 +339,7 @@ struct Index {
           .layoutWeight(1)
       }
       .width('100%')
-      .height(48)
+      .height(44)
       .onClick(() => {
         this.handleMountButton();
       })
@@ -326,13 +356,146 @@ struct Index {
           .layoutWeight(1)
       }
       .width('100%')
-      .height(48)
+      .height(44)
       .onClick(() => {
-        this.keyboardVisible = !this.keyboardVisible;
+        this.toggleKeyboard();
+      })
+
+      Divider().color('#2A2A2E')
+
+      Row({ space: 12 }) {
+        SymbolGlyph($r('sys.symbol.gearshape'))
+          .fontSize(22)
+          .fontColor(['#DDDDDD'])
+        Text('设置')
+          .fontSize(16)
+          .fontColor('#FFFFFF')
+          .layoutWeight(1)
+      }
+      .width('100%')
+      .height(44)
+      .onClick(() => {
+        this.showMenu = false;
+        this.openSettings();
       })
     }
+    .width(240)
+    .padding({ left: 14, right: 14, top: 10, bottom: 10 })
+    // No background here on purpose: the native popup bubble paints
+    // popupColor behind this content (and colors the arrow to match).
+  }
+
+  // Corner gear anchor for quickMenu(), shared by the expanded bar and the
+  // collapsed chip so the popup config stays in one place. bindPopup only
+  // binds the bubble; the anchor itself must flip the state (official
+  // PopupOptions pattern). One-way show + onStateChange, never $$: the mask
+  // dismiss must write false back or showMenu sticks true (gear dies, branch
+  // swaps resurrect the popup on a fresh anchor). Native bubble: arrow on +
+  // dark popupColor, rise-in / fade-out transition.
+  @Builder
+  gearMenuButton() {
+    Column() {
+      SymbolGlyph($r('sys.symbol.gearshape'))
+        .fontSize(20)
+        .fontColor(['#DDDDDD'])
+    }
     .width('100%')
-    .padding({ left: 16, right: 16, top: 16, bottom: 16 })
+    .height(38)
+    .justifyContent(FlexAlign.Center)
+    .backgroundColor('#2A2A2E')
+    .borderRadius(4)
+    .onClick(() => {
+      this.showMenu = !this.showMenu;
+    })
+    .bindPopup(this.showMenu, {
+      builder: this.quickMenu(),
+      placement: Placement.Top,
+      popupColor: '#1E1E22',
+      backgroundBlurStyle: BlurStyle.NONE,
+      enableArrow: true,
+      radius: 12,
+      mask: { color: Color.Transparent },
+      onStateChange: (event: PopupStateChangeParam) => {
+        if (!event.isVisible) {
+          this.showMenu = false;
+        }
+      },
+      transition: TransitionEffect.asymmetric(
+        TransitionEffect.OPACITY.animation({ duration: 220, curve: Curve.EaseOut })
+          .combine(TransitionEffect.translate({ y: 12 })),
+        TransitionEffect.OPACITY.animation({ duration: 150, curve: Curve.EaseIn })
+      )
+    })
+  }
+
+  /**
+   * Bottom overlay column floating over the canvas: Termux control bar
+   * (expanded) or the settings/expand corner (collapsed), with the soft
+   * keyboard below it when open. HitTestMode.None lets touches on the
+   * strips' empty areas fall through to the canvas (DOS mouse) while keys
+   * and the gear keep their own handlers; the bar floats at 0.8 opacity so
+   * the DOS screen stays readable underneath.
+   */
+  @Builder
+  controlOverlay() {
+    Column() {
+      if (this.barExpanded) {
+        Row({ space: 4 }) {
+          ControlKeyBar({ emu: this.emu })
+            .layoutWeight(1)
+
+          Column({ space: 2 }) {
+            this.gearMenuButton()
+
+            Column() {
+              SymbolGlyph($r('sys.symbol.chevron_down'))
+                .fontSize(20)
+                .fontColor(['#DDDDDD'])
+            }
+            .width('100%')
+            .height(38)
+            .justifyContent(FlexAlign.Center)
+            .backgroundColor('#2A2A2E')
+            .borderRadius(4)
+            .onClick(() => {
+              this.barExpanded = false;
+            })
+          }
+          .width(44)
+        }
+        .width('100%')
+        .padding(6)
+        .backgroundColor('#18181C')
+        .opacity(0.8)
+        .hitTestBehavior(HitTestMode.None)
+      } else {
+        // Collapsed: keep the settings entry above the expand button in the
+        // same bottom-right corner, popup still anchored beside the gear.
+        Row() {
+          Blank()
+          Column({ space: 2 }) {
+            this.gearMenuButton()
+
+            controlCornerButton($r('sys.symbol.chevron_up'), () => {
+              this.barExpanded = true;
+            })
+          }
+          .width(44)
+        }
+        .width('100%')
+        .padding(6)
+        .backgroundColor('#18181C')
+        .opacity(0.8)
+        .hitTestBehavior(HitTestMode.None)
+      }
+
+      if (this.keyboardVisible) {
+        SoftKeyboard({ emu: this.emu })
+          .opacity(this.keyboardOpacity)
+      }
+    }
+    .width('100%')
+    .hitTestBehavior(HitTestMode.None)
   }
 
   build() {
@@ -341,62 +504,49 @@ struct Index {
         this.desktopTitleBar()
       }
 
-      // The on-screen keyboard floats translucently over the DOS screen so it
-      // never squeezes the emulator canvas; its toggle lives in the settings
-      // sheet (touch) or the title bar (2in1).
+      // Both on-screen overlays float translucently over the DOS screen so
+      // they never squeeze the emulator canvas: the Termux control bar and
+      // the soft keyboard stack in one bottom-anchored column (bar above
+      // keyboard, so an open keyboard never hides the bar's corner buttons
+      // and the bar never covers the keyboard's space row). The bar toggle
+      // is its own chevron, the keyboard toggle lives in the quick menu
+      // (touch) or the title bar (2in1), its opacity in the settings sheet.
       Stack({ alignContent: Alignment.Bottom }) {
         EmulatorScreen({ emu: this.emu })
-        if (this.keyboardVisible) {
-          SoftKeyboard({ emu: this.emu })
-            .opacity(0.8)
+        if (!IS_DESKTOP) {
+          this.controlOverlay()
         }
       }
       .layoutWeight(1)
-
-      if (!IS_DESKTOP) {
-        // Collapse/expand only affects the Termux control bar.
-        if (this.barExpanded) {
-          ControlKeyBar({
-            emu: this.emu,
-            onOpenSettings: () => {
-              this.showSettings = true;
-            },
-            onCollapse: () => {
-              this.barExpanded = false;
-            }
-          })
-        } else {
-          // Collapsed: keep the settings entry above the expand button in the
-          // same bottom-right corner.
-          Row() {
-            Blank()
-            Column({ space: 2 }) {
-              controlCornerButton($r('sys.symbol.gearshape'), () => {
-                this.showSettings = true;
-              })
-              controlCornerButton($r('sys.symbol.chevron_up'), () => {
-                this.barExpanded = true;
-              })
-            }
-            .width(44)
-          }
-          .width('100%')
-          .padding(6)
-          .backgroundColor('#18181C')
-        }
-      }
     }
     .width('100%')
     .height('100%')
     .backgroundColor('#101014')
+    // Settings as a half-modal sheet, identical on every device. Default
+    // sheet style depends on window width (<600vp bottom, 600-840 center,
+    // >=840 spring-loaded) and 2in1 adds its own defaults (hover-mode
+    // takeover, shadow on 2in1 only, plateless close icon), so everything
+    // that differs is pinned here: forced centered floating card + shadow +
+    // mask (center style masks by default), the same on the 2in1 as on
+    // tablet. Fixed width so the card reads as a dialog on any window size.
+    // Phones never fall into CENTER's <600vp bottom fallback because
+    // EntryAbility forces narrow windows to landscape (width >= 600vp).
+    .bindSheet(this.showSettings, this.settingsSheet(), {
+      preferType: SheetType.CENTER,
+      width: 520,
+      height: SheetSize.FIT_CONTENT,
+      backgroundColor: '#1A1A20',
+      showClose: false,
+      enableHoverMode: false,
+      shadow: ShadowStyle.OUTER_FLOATING_MD,
+      onDisappear: () => {
+        this.showSettings = false;
+      }
+    })
     .focusable(true)
     .defaultFocus(true)
     .onKeyEvent((event: KeyEvent) => {
       this.handleKey(event);
-    })
-    .bindSheet($$this.showSettings, this.settingsPanel(), {
-      height: SheetSize.FIT_CONTENT,
-      backgroundColor: '#1E1E22'
     })
   }
 }

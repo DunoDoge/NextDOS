@@ -9,9 +9,8 @@ export class ControlKeyDef {
 }
 
 /**
- * Icon button of the control bar's right-bottom corner (settings entry above,
- * collapse below) and of the collapsed chip. Static icon + handler only, so
- * by-value @Builder params are safe.
+ * Icon button of the collapsed control bar's bottom-right corner (expand
+ * chip). Static icon + handler only, so by-value @Builder params are safe.
  */
 @Builder
 export function controlCornerButton(icon: Resource, action: () => void) {
@@ -34,6 +33,8 @@ export function controlCornerButton(icon: Resource, action: () => void) {
  * Termux-style control key bar pinned to the bottom edge on touch devices.
  * Keys deliver plain down/up events like SoftKeyboard; Ctrl/Alt are sticky
  * latches so DOS can still be driven when the full keyboard is collapsed.
+ * The settings/collapse corner is drawn by Index (page) so its settings
+ * popup can anchor beside the gear button.
  */
 @Component
 export struct ControlKeyBar {
@@ -41,8 +42,6 @@ export struct ControlKeyBar {
   // the parent uses; @Prop would deep-copy it and break injectKey's running gate.
   // NOTE: must be public — private members are not constructor-initializable.
   emu: DosEmulator = new DosEmulator();
-  onOpenSettings: () => void = () => {};
-  onCollapse: () => void = () => {};
   @State ctrlOn: boolean = false;
   @State altOn: boolean = false;
   private row1: ControlKeyDef[] = [];
@@ -162,18 +161,7 @@ export struct ControlKeyBar {
         .width('100%')
         .height(38)
       }
-      .layoutWeight(1)
-
-      // Right-bottom corner of the bar: settings entry on top, collapse below.
-      Column({ space: 2 }) {
-        controlCornerButton($r('sys.symbol.gearshape'), () => {
-          this.onOpenSettings();
-        })
-        controlCornerButton($r('sys.symbol.chevron_down'), () => {
-          this.onCollapse();
-        })
-      }
-      .width(44)
+      .width('100%')
     }
     .width('100%')
     .padding(6)
