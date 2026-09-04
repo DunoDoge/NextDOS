@@ -12,6 +12,20 @@
     "deliveryWithInstall": true,
     "installationFree": false,
     "pages": "$profile:main_pages",
+    // AGC standardized privacy hosting (debug/local-install path; store
+    // builds take the hosted config from AGC). The system pops the
+    // standardized privacy dialog itself — never self-draw one, AppGallery
+    // review rejects hosted apps that do.
+    "metadata": [
+      {
+        "name": "appgallery_privacy_hosted",
+        "value": "1"
+      },
+      {
+        "name": "appgallery_privacy_link_privacy_statement",
+        "value": "https://agreement-drcn.hispace.dbankcloud.cn/index.html?lang=zh&agreementId=2032214202961163328"
+      }
+    ],
     "abilities": [
       {
         "name": "EntryAbility",
