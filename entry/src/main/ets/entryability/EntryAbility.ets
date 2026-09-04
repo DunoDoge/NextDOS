@@ -1,7 +1,7 @@
 import { AbilityConstant, ConfigurationConstant, UIAbility, Want } from '@kit.AbilityKit';
-import { deviceInfo } from '@kit.BasicServicesKit';
+import { BusinessError, deviceInfo } from '@kit.BasicServicesKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
-import { window } from '@kit.ArkUI';
+import { display, window } from '@kit.ArkUI';
 
 const DOMAIN = 0x0000;
 
@@ -31,8 +31,53 @@ export default class EntryAbility extends UIAbility {
       hilog.info(DOMAIN, 'testTag', 'Succeeded in loading the content.');
       if (deviceInfo.deviceType === '2in1') {
         this.applyDesktopTitleBar(windowStage);
+      } else {
+        this.applyImmersiveMode(windowStage);
       }
+      this.applyNarrowScreenOrientation(windowStage);
     });
+  }
+
+  /**
+   * Phone and tablet run edge-to-edge: the window extends behind the system
+   * bars and the bars are hidden entirely, so no white status/navigation
+   * strip is left. The system reveals the bars temporarily on an edge swipe
+   * and auto-hides them again. 2in1 keeps its windowed desktop layout.
+   */
+  private applyImmersiveMode(windowStage: window.WindowStage): void {
+    try {
+      const win = windowStage.getMainWindowSync();
+      win.setWindowLayoutFullScreen(true).catch((err: BusinessError) => {
+        hilog.error(DOMAIN, 'testTag', 'Failed to extend behind system bars. Cause: %{public}s', JSON.stringify(err));
+      });
+      win.setWindowSystemBarEnable([]).catch((err: BusinessError) => {
+        hilog.error(DOMAIN, 'testTag', 'Failed to hide system bars. Cause: %{public}s', JSON.stringify(err));
+      });
+    } catch (err) {
+      hilog.error(DOMAIN, 'testTag', 'Failed to apply immersive mode. Cause: %{public}s', JSON.stringify(err));
+    }
+  }
+
+  /**
+   * Narrow screens (a phone held in portrait) run the emulator forced to
+   * landscape: the DOS view is barely usable in portrait, and the centered
+   * settings sheet only renders centered above 600vp of window width. Wide
+   * windows keep whatever orientation they already have.
+   */
+  private applyNarrowScreenOrientation(windowStage: window.WindowStage): void {
+    try {
+      const win = windowStage.getMainWindowSync();
+      const rect = win.getWindowProperties().windowRect;
+      const density = display.getDefaultDisplaySync().densityPixels;
+      if (rect.width / density < 600) {
+        win.setPreferredOrientation(window.Orientation.LANDSCAPE)
+          .catch((err: BusinessError) => {
+            hilog.error(DOMAIN, 'testTag', 'Failed to force landscape. Cause: %{public}s', JSON.stringify(err));
+          });
+      }
+    } catch (err) {
+      hilog.error(DOMAIN, 'testTag', 'Failed to read window for orientation. Cause: %{public}s', JSON.stringify(err));
+    }
   }
 
   /**
