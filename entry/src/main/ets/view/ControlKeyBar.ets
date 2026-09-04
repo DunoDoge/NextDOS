@@ -31,8 +31,9 @@ export function controlCornerButton(icon: Resource, action: () => void) {
 
 /**
  * Termux-style control key bar pinned to the bottom edge on touch devices.
- * Keys deliver plain down/up events like SoftKeyboard; Ctrl/Alt are sticky
- * latches so DOS can still be driven when the full keyboard is collapsed.
+ * Keys deliver plain down/up events like a hardware keyboard; Ctrl/Alt are
+ * sticky latches so DOS can still be driven without one. Text input itself
+ * goes through the system input method (Index.imeLayer).
  * The settings/collapse corner is drawn by Index (page) so its settings
  * popup can anchor beside the gear button.
  */

@@ -1,13 +1,12 @@
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { common } from '@kit.AbilityKit';
 import { BusinessError, deviceInfo } from '@kit.BasicServicesKit';
-import { window } from '@kit.ArkUI';
+import { KeyboardAvoidMode, window } from '@kit.ArkUI';
+import { KeyCode } from '@kit.InputKit';
 import { DosEmulator } from '../model/DosEmulator';
 import { DosKeyMap } from '../model/DosKeyMap';
 import { MountFolder } from '../model/MountFolder';
-import { AppSettings } from '../model/AppSettings';
 import { EmulatorScreen } from '../view/EmulatorScreen';
-import { SoftKeyboard } from '../view/SoftKeyboard';
 import { ControlKeyBar, controlCornerButton } from '../view/ControlKeyBar';
 import { SettingsSheet } from '../view/SettingsSheet';
 
@@ -22,11 +21,6 @@ const IS_DESKTOP: boolean = deviceInfo.deviceType === '2in1';
 struct Index {
   @State booted: boolean = false;
   @State paused: boolean = false;
-  // The on-screen keyboard stays hidden until shown from the quick menu
-  // (touch) or the title bar (2in1); the value and opacity live in AppStorage
-  // so the settings sheet edits them live and AppSettings persists them.
-  @StorageLink('keyboardVisible') keyboardVisible: boolean = false;
-  @StorageLink('keyboardOpacity') keyboardOpacity: number = 0.8;
   @State barExpanded: boolean = true;
   // Quick-menu popup anchored beside the settings entry button (touch).
   @State showMenu: boolean = false;
@@ -35,6 +29,14 @@ struct Index {
   @State showSettings: boolean = false;
   @State folderMounted: boolean = false;
   @State mountBusy: boolean = false;
+  // Text buffer of the invisible IME field (imeLayer). Each content change
+  // is diffed against imeLastBuffer and forwarded to the guest as keystrokes
+  // (see handleImeChange); reset once it grows past 128 chars.
+  @State imeBuffer: string = '';
+  private imeLastBuffer: string = '';
+  // True while the IME field holds focus; key events then bubble from it to
+  // the root handler, which must skip them to avoid double injection.
+  private imeFocused: boolean = false;
   // Window three-button rect in vp, refined via windowTitleButtonRectChange;
   // app symbols must stop short of it (left of the three buttons).
   @State titleBarHeight: number = 44;
@@ -44,11 +46,12 @@ struct Index {
   private mainWindow: window.Window | null = null;
 
   aboutToAppear(): void {
-    // Pull persisted settings into AppStorage before the links are read
-    // elsewhere; setOrCreate overwrites the defaults the @StorageLink wrote.
-    const ctx = getContext(this) as common.UIAbilityContext;
-    AppStorage.setOrCreate('keyboardVisible', AppSettings.loadKeyboardVisible(ctx));
-    AppStorage.setOrCreate('keyboardOpacity', AppSettings.loadKeyboardOpacity(ctx));
+    if (!IS_DESKTOP) {
+      // RESIZE: when the soft keyboard pops up the page shrinks above it
+      // (canvas + control bar stay visible) instead of the default OFFSET
+      // panning the whole DOS view off-screen.
+      this.getUIContext().setKeyboardAvoidMode(KeyboardAvoidMode.RESIZE);
+    }
     this.boot();
     if (IS_DESKTOP) {
       this.trackTitleButtons();
@@ -121,8 +124,88 @@ struct Index {
     if (event.type !== KeyType.Down && event.type !== KeyType.Up) {
       return;
     }
+    // While the IME field holds focus its key events bubble up to the root;
+    // the field's own handlers already forward them (handleImeKeyEvent and
+    // the content diff), so injecting here would double every keystroke.
+    if (this.imeFocused) {
+      return;
+    }
     if (!DosKeyMap.isInjectable(event.keyCode)) {
       hilog.info(0x0000, TAG, 'key dropped: %{public}d', event.keyCode);
+      return;
+    }
+    this.emu.injectKey(event.keyCode, event.type === KeyType.Down);
+  }
+
+  /**
+   * Forwards IME field content changes to the guest as keystrokes. System
+   * soft keyboards do not deliver key events, only committed/composing text,
+   * so the old vs. new buffer content is diffed: deleted characters become
+   * backspace presses, inserted text is typed with the paced down/up pairs
+   * of DosEmulator.typeIntoGuest (which maps every printable ASCII char).
+   */
+  private handleImeChange(value: string): void {
+    const prev: string = this.imeLastBuffer;
+    if (value === prev) {
+      return;
+    }
+    const minLen: number = Math.min(prev.length, value.length);
+    let prefix: number = 0;
+    while (prefix < minLen && prev.charAt(prefix) === value.charAt(prefix)) {
+      prefix++;
+    }
+    let suffix: number = 0;
+    while (suffix < minLen - prefix &&
+      prev.charAt(prev.length - 1 - suffix) === value.charAt(value.length - 1 - suffix)) {
+      suffix++;
+    }
+    const deleted: number = prev.length - prefix - suffix;
+    const inserted: string = value.substring(prefix, value.length - suffix);
+    this.imeLastBuffer = value;
+    if (deleted > 32) {
+      // Selection-wide wipe (select-all / programmatic clear), not typing:
+      // swallow it instead of flooding the guest with backspaces.
+      return;
+    }
+    for (let i = 0; i < deleted; i++) {
+      this.emu.injectKey(KeyCode.KEYCODE_DEL, true);
+      this.emu.injectKey(KeyCode.KEYCODE_DEL, false);
+    }
+    if (inserted.length > 0) {
+      this.emu.typeIntoGuest(inserted);
+    }
+    if (value.length > 128) {
+      // Keep the invisible buffer small; the next change re-diffs from empty.
+      this.imeLastBuffer = '';
+      this.imeBuffer = '';
+    }
+  }
+
+  /**
+   * Hardware-key events that arrive while the IME field is focused (e.g. a
+   * Bluetooth keyboard on a phone). Text-producing keys are already forwarded
+   * through the content diff and must not be injected here; everything else
+   * keeps the direct injection path.
+   */
+  private handleImeKeyEvent(event: KeyEvent): void {
+    if (!this.booted) {
+      return;
+    }
+    if (event.type !== KeyType.Down && event.type !== KeyType.Up) {
+      return;
+    }
+    if (DosKeyMap.isImeHandled(event.keyCode)) {
+      // Deletion at an empty buffer produces no content change (no onChange),
+      // so backspaces pressed past the buffer start are forwarded directly.
+      if ((event.keyCode === KeyCode.KEYCODE_DEL || event.keyCode === KeyCode.KEYCODE_FORWARD_DEL) &&
+        this.imeLastBuffer.length === 0 && event.type === KeyType.Down) {
+        this.emu.injectKey(event.keyCode, true);
+        this.emu.injectKey(event.keyCode, false);
+      }
+      return;
+    }
+    if (!DosKeyMap.isInjectable(event.keyCode)) {
+      hilog.info(0x0000, TAG, 'ime key dropped: %{public}d', event.keyCode);
       return;
     }
     this.emu.injectKey(event.keyCode, event.type === KeyType.Down);
@@ -157,15 +240,6 @@ struct Index {
 
   private showToast(message: string): void {
     this.getUIContext().getPromptAction().showToast({ message: message });
-  }
-
-  private persistKeyboard(): void {
-    AppSettings.save(getContext(this) as common.UIAbilityContext, this.keyboardVisible, this.keyboardOpacity);
-  }
-
-  private toggleKeyboard(): void {
-    this.keyboardVisible = !this.keyboardVisible;
-    this.persistKeyboard();
   }
 
   private openSettings(): void {
@@ -246,20 +320,6 @@ struct Index {
           this.handleMountButton();
         })
 
-        Column() {
-          SymbolGlyph($r('sys.symbol.keyboard'))
-            .fontSize(18)
-            .fontColor(['#FFFFFF'])
-        }
-        .width(36)
-        .height(30)
-        .justifyContent(FlexAlign.Center)
-        .borderRadius(6)
-        .hoverEffect(HoverEffect.Highlight)
-        .onClick(() => {
-          this.toggleKeyboard();
-        })
-
         // Rightmost app symbol: the settings entry, opens the shared
         // half-modal settings sheet.
         Column() {
@@ -288,8 +348,8 @@ struct Index {
   }
 
   // Quick-menu popup anchored beside the corner gear on touch devices:
-  // pause / reset / mount / keyboard quick controls, with the settings sheet
-  // entry as the closing row.
+  // pause / reset / mount quick controls, with the settings sheet entry as
+  // the closing row.
   @Builder
   quickMenu() {
     Column() {
@@ -342,23 +402,6 @@ struct Index {
       .height(44)
       .onClick(() => {
         this.handleMountButton();
-      })
-
-      Divider().color('#2A2A2E')
-
-      Row({ space: 12 }) {
-        SymbolGlyph($r('sys.symbol.keyboard'))
-          .fontSize(22)
-          .fontColor(['#DDDDDD'])
-        Text(this.keyboardVisible ? '收起键盘' : '显示键盘')
-          .fontSize(16)
-          .fontColor('#FFFFFF')
-          .layoutWeight(1)
-      }
-      .width('100%')
-      .height(44)
-      .onClick(() => {
-        this.toggleKeyboard();
       })
 
       Divider().color('#2A2A2E')
@@ -430,11 +473,10 @@ struct Index {
 
   /**
    * Bottom overlay column floating over the canvas: Termux control bar
-   * (expanded) or the settings/expand corner (collapsed), with the soft
-   * keyboard below it when open. HitTestMode.None lets touches on the
-   * strips' empty areas fall through to the canvas (DOS mouse) while keys
-   * and the gear keep their own handlers; the bar floats at 0.8 opacity so
-   * the DOS screen stays readable underneath.
+   * (expanded) or the settings/expand corner (collapsed). HitTestMode.None
+   * lets touches on the strips' empty areas fall through to the canvas (DOS
+   * mouse) while keys and the gear keep their own handlers; the bar floats
+   * at 0.8 opacity so the DOS screen stays readable underneath.
    */
   @Builder
   controlOverlay() {
@@ -488,14 +530,42 @@ struct Index {
         .opacity(0.8)
         .hitTestBehavior(HitTestMode.None)
       }
-
-      if (this.keyboardVisible) {
-        SoftKeyboard({ emu: this.emu })
-          .opacity(this.keyboardOpacity)
-      }
     }
     .width('100%')
     .hitTestBehavior(HitTestMode.None)
+  }
+
+  /**
+   * Touch-device IME plumbing: a full-screen INVISIBLE TextArea floating over
+   * the canvas. A tap anywhere on the DOS screen hits it like a normal input
+   * box (focusOnTouch attaches the system input method and pops up the soft
+   * keyboard), while HitTestMode.Transparent lets the same touch also reach
+   * the EmulatorScreen underneath for mouse injection. Its content changes
+   * are diffed into guest keystrokes (handleImeChange). Programmatic
+   * requestFocus is deliberately NOT used: it focuses the box but does not
+   * attach it to the input method service, so the keyboard never rises.
+   */
+  @Builder
+  imeLayer() {
+    TextArea({ text: this.imeBuffer })
+      .width('100%')
+      .height('100%')
+      .opacity(0)
+      .padding(0)
+      .copyOption(CopyOptions.None)
+      .hitTestBehavior(HitTestMode.Transparent)
+      .onChange((value: string) => {
+        this.handleImeChange(value);
+      })
+      .onFocus(() => {
+        this.imeFocused = true;
+      })
+      .onBlur(() => {
+        this.imeFocused = false;
+      })
+      .onKeyEvent((event: KeyEvent) => {
+        this.handleImeKeyEvent(event);
+      })
   }
 
   build() {
@@ -504,16 +574,16 @@ struct Index {
         this.desktopTitleBar()
       }
 
-      // Both on-screen overlays float translucently over the DOS screen so
-      // they never squeeze the emulator canvas: the Termux control bar and
-      // the soft keyboard stack in one bottom-anchored column (bar above
-      // keyboard, so an open keyboard never hides the bar's corner buttons
-      // and the bar never covers the keyboard's space row). The bar toggle
-      // is its own chevron, the keyboard toggle lives in the quick menu
-      // (touch) or the title bar (2in1), its opacity in the settings sheet.
+      // On-screen overlays float translucently over the DOS screen so they
+      // never squeeze the emulator canvas: the Termux control bar is one
+      // bottom-anchored column with its own chevron toggle. Text input on
+      // touch devices goes through the system input method: tapping the
+      // screen focuses the invisible field in imeLayer() and the soft
+      // keyboard pops up above the page (KeyboardAvoidMode.RESIZE).
       Stack({ alignContent: Alignment.Bottom }) {
         EmulatorScreen({ emu: this.emu })
         if (!IS_DESKTOP) {
+          this.imeLayer()
           this.controlOverlay()
         }
       }
