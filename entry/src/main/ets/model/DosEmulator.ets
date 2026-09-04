@@ -25,6 +25,10 @@ export class DosEmulator {
   private running: boolean = false;
   private paused: boolean = false;
   private tickCount: number = 0;
+  // Serialization tail for typeIntoGuest: paced down/up pairs from
+  // interleaved calls (IME commits arrive per content change) would
+  // corrupt the guest's modifier state, so bursts are queued instead.
+  private typeChain: Promise<void> = Promise.resolve();
 
   /** First-run: copy the boot floppy image into the sandbox and write the config.
    * The DOSBox resource tree is deployed natively from rawfile (see
@@ -216,23 +220,78 @@ export class DosEmulator {
       return KeyCode.KEYCODE_0 + (code - 48);
     }
     switch (ch) {
-      case '/':
-        return KeyCode.KEYCODE_SLASH;
-      case '.':
-        return KeyCode.KEYCODE_PERIOD;
-      case '-':
-        return KeyCode.KEYCODE_MINUS;
-      case ':':
-        return KeyCode.KEYCODE_SEMICOLON;
+      case '\t':
+        return KeyCode.KEYCODE_TAB;
       case ' ':
         return KeyCode.KEYCODE_SPACE;
       case '\r':
       case '\n':
         return KeyCode.KEYCODE_ENTER;
+      // US-layout punctuation row by row.
+      case '`':
+        return KeyCode.KEYCODE_GRAVE;
+      case '-':
+        return KeyCode.KEYCODE_MINUS;
+      case '=':
+        return KeyCode.KEYCODE_EQUALS;
+      case '[':
+        return KeyCode.KEYCODE_LEFT_BRACKET;
+      case ']':
+        return KeyCode.KEYCODE_RIGHT_BRACKET;
+      case '\\':
+        return KeyCode.KEYCODE_BACKSLASH;
+      case ';':
+      case ':':
+        return KeyCode.KEYCODE_SEMICOLON;
+      case '\'':
+        return KeyCode.KEYCODE_APOSTROPHE;
+      case ',':
+        return KeyCode.KEYCODE_COMMA;
+      case '.':
+        return KeyCode.KEYCODE_PERIOD;
+      case '/':
+        return KeyCode.KEYCODE_SLASH;
       default:
         break;
     }
     return -1;
+  }
+
+  /**
+   * Whether the character sits on the shifted plane of the US layout
+   * (uppercase letters and shifted punctuation); used to wrap the key
+   * press in Shift down/up events.
+   */
+  private static needsShift(ch: string): boolean {
+    if (ch >= 'A' && ch <= 'Z') {
+      return true;
+    }
+    switch (ch) {
+      case '!':
+      case '@':
+      case '#':
+      case '$':
+      case '%':
+      case '^':
+      case '&':
+      case '*':
+      case '(':
+      case ')':
+      case '_':
+      case '+':
+      case '{':
+      case '}':
+      case '|':
+      case ':':
+      case '"':
+      case '<':
+      case '>':
+      case '?':
+      case '~':
+        return true;
+      default:
+        return false;
+    }
   }
 
   private static sleepMs(ms: number): Promise<void> {
@@ -245,19 +304,28 @@ export class DosEmulator {
 
   /**
    * Types text into the running guest through the keyboard-injection
-   * path (down/up pairs, spaced so the BIOS key buffer keeps up).
+   * path (down/up pairs, spaced so the BIOS key buffer keeps up). Bursts
+   * are serialized on one queue so concurrent callers (IME content changes)
+   * cannot interleave paced modifier/keystroke pairs.
    */
-  async typeIntoGuest(text: string): Promise<void> {
+  typeIntoGuest(text: string): Promise<void> {
     if (!this.running) {
-      return;
+      return Promise.resolve();
     }
+    this.typeChain = this.typeChain.then(() => {
+      return this.typeChars(text);
+    });
+    return this.typeChain;
+  }
+
+  private async typeChars(text: string): Promise<void> {
     for (let i = 0; i < text.length; i++) {
       const ch: string = text.charAt(i);
       const keyCode: number = DosEmulator.charToKeyCode(ch);
       if (keyCode < 0) {
         continue;
       }
-      const withShift: boolean = (ch >= 'A' && ch <= 'Z') || ch === ':';
+      const withShift: boolean = DosEmulator.needsShift(ch);
       if (withShift) {
         testNapi.injectKey(KeyCode.KEYCODE_SHIFT_LEFT, true, true);
         await DosEmulator.sleepMs(30);

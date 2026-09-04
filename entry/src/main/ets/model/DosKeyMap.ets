@@ -73,4 +73,46 @@ export class DosKeyMap {
         return false;
     }
   }
+
+  /**
+   * Keys an edit box consumes itself when it holds focus (text insertion,
+   * Enter, backspace, Tab, CapsLock). While the IME input field is focused
+   * these reach the guest through the field's content diff, never by direct
+   * injection — injecting them would deliver every keystroke twice.
+   */
+  static isImeHandled(keyCode: number): boolean {
+    const code: number = keyCode;
+    // Letters A-Z and digits 0-9.
+    if (code >= KeyCode.KEYCODE_0 && code <= KeyCode.KEYCODE_Z) {
+      return true;
+    }
+    // Numpad 0-9 and keypad operators/separator.
+    if (code >= KeyCode.KEYCODE_NUMPAD_0 && code <= KeyCode.KEYCODE_NUMPAD_RIGHT_PAREN) {
+      return true;
+    }
+    switch (code) {
+      case KeyCode.KEYCODE_SPACE:
+      case KeyCode.KEYCODE_ENTER:
+      case KeyCode.KEYCODE_NUMPAD_ENTER:
+      case KeyCode.KEYCODE_DEL:
+      case KeyCode.KEYCODE_FORWARD_DEL:
+      case KeyCode.KEYCODE_TAB:
+      case KeyCode.KEYCODE_CAPS_LOCK:
+      // Punctuation — typed text on the hardware layout.
+      case KeyCode.KEYCODE_GRAVE:
+      case KeyCode.KEYCODE_MINUS:
+      case KeyCode.KEYCODE_EQUALS:
+      case KeyCode.KEYCODE_COMMA:
+      case KeyCode.KEYCODE_PERIOD:
+      case KeyCode.KEYCODE_LEFT_BRACKET:
+      case KeyCode.KEYCODE_RIGHT_BRACKET:
+      case KeyCode.KEYCODE_BACKSLASH:
+      case KeyCode.KEYCODE_SEMICOLON:
+      case KeyCode.KEYCODE_APOSTROPHE:
+      case KeyCode.KEYCODE_SLASH:
+        return true;
+      default:
+        return false;
+    }
+  }
 }
