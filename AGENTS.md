@@ -12,7 +12,8 @@ entry/src/main/
     pages/Index.ets          # the only @Entry page; owns boot, state, device branching,
                              #   IME text input (imeLayer: invisible TextArea + tap-to-focus)
     view/                    # UI components: EmulatorScreen, ControlKeyBar (touch),
-                             #   SettingsSheet
+                             #   SettingsSheet (About: version/repo/license),
+                             #   LicenseSheet (license sub-page over the sheet)
     model/                   # non-UI: DosEmulator (NAPI controller), DosKeyMap, MountFolder
     entryability/            # EntryAbility: window setup (immersive, orientation, decor)
   cpp/
@@ -39,8 +40,10 @@ keyboard pops up (`KeyboardAvoidMode.RESIZE` keeps the canvas visible);
 `DosEmulator.typeIntoGuest`. There is deliberately no in-app SoftKeyboard
 component and no keyboard-toggle button.
 
-Licensing: dosbox-staging is GPL-2.0-or-later — the combined app inherits it.
-See `entry/src/main/cpp/third_party/NOTICE.md`.
+Licensing: dosbox-staging is GPL-2.0-or-later — the combined app inherits it;
+the repo-root `LICENSE` carries the full GPL-2.0 text and `README.md` states
+the license for users. Keep both, plus the in-app `LicenseSheet`, in sync with
+`entry/src/main/cpp/third_party/NOTICE.md` when third-party components change.
 
 ## Build & checks
 
@@ -89,11 +92,17 @@ See `entry/src/main/cpp/third_party/NOTICE.md`.
 - **Device branching.** `IS_DESKTOP` = `deviceType === '2in1'`: 2in1 gets a
   custom title row (window decor hidden, symbols must stop left of the
   window three-button rect); phone/tablet get the bottom ControlKeyBar and
-  immersive full-screen. Windows narrower than 600 vp force landscape
-  (`window.Orientation.LANDSCAPE`) and the settings sheet is centered only
-  above 600 vp.
-- **ArkUI popups.** `bindSheet`/`bindPopup` `isShow` is one-way: write the
-  state back in `onDisappear`, or drag/ESC closes desync the UI.
+  immersive full-screen. The touch control bar is collapsible: when
+  collapsed the bottom bar goes fully transparent and only the gear (quick
+  menu) and expand buttons float over the canvas. The canvas itself is
+  aspect-fit (letterboxed, never cropped or stretched). Windows narrower
+  than 600 vp force landscape (`window.Orientation.LANDSCAPE`) and the
+  settings sheet is centered only above 600 vp.
+- **ArkUI popups.** `bindSheet`/`bindPopup`/`bindContentCover` `isShow` is
+  one-way: write the state back in `onDisappear`, or drag/ESC closes desync
+  the UI. To open a sub-page from inside the open settings sheet (e.g. the
+  license page) use `bindContentCover` stacked over the sheet — sheet-in-sheet
+  has no documented guarantee; a full modal covering the open sheet does.
 - `@Builder` function parameters are by-value; pass state via object
   wrappers or `$$` two-way binding where mutation must propagate.
 - **IME double-injection.** While the invisible IME field is focused, key
@@ -104,7 +113,10 @@ See `entry/src/main/cpp/third_party/NOTICE.md`.
 - Settings that the sheet edits live go through `AppStorage` (`@StorageLink`)
   and persist via a small `AppSettings`-style store; seed AppStorage in
   `aboutToAppear` before components read the links. (No live-edited settings
-  exist right now; the pattern applies when adding some.)
+  exist right now — the sheet currently holds only the About group:
+  version, repository link, and the license sub-page; the pattern applies
+  when adding some. The old keyboard visibility/opacity settings died with
+  the in-app keyboard.)
 
 ## Docs to read first
 
