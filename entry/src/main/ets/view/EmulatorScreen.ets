@@ -5,7 +5,8 @@ import { DosEmulator } from '../model/DosEmulator';
 /**
  * Renders the emulated display and forwards touch input as emulated mouse
  * events. Receives BGRA frames from the native core and draws them into a
- * full-size Canvas, scaled to fit while preserving aspect ratio
+ * full-size Canvas, scaled uniformly to fill the canvas WIDTH and centered;
+ * rows overflowing above and below are cropped rather than stretched
  * (nearest-neighbour for a crisp retro look).
  */
 @Component
@@ -22,12 +23,12 @@ export struct EmulatorScreen {
   private frameH: number = 0;
   private canvasW: number = 1;
   private canvasH: number = 1;
-  // Draw rect of the fitted image inside the canvas (for touch -> mouse).
-  private drawX: number = 0;
+  // Vertical draw rect of the fitted image inside the canvas (for touch ->
+  // mouse); x is always 0 because the frame always fills the canvas width.
   private drawY: number = 0;
   private drawW: number = 0;
   private drawH: number = 0;
-  // Frame pixels per canvas pixel (canvas usually has more pixels).
+  // Frame pixels per canvas pixel (uniform: aspect ratio stays fixed).
   private pxScale: number = 1;
   private lastTouchX: number = 0;
   private lastTouchY: number = 0;
@@ -97,30 +98,31 @@ export struct EmulatorScreen {
       ctx.fillRect(0, 0, this.canvasW, this.canvasH);
       return;
     }
-    const scale: number = Math.min(this.canvasW / this.frameW, this.canvasH / this.frameH);
+    // Uniform scale filling the canvas WIDTH (user choice over stretching):
+    // on canvases proportionally wider than the frame (phone landscape) the
+    // overflowing rows above and below are cropped (dy goes negative); on
+    // narrower canvases the frame letterboxes top/bottom instead.
+    const scale: number = this.canvasW / this.frameW;
     const dw: number = this.frameW * scale;
     const dh: number = this.frameH * scale;
-    const dx: number = (this.canvasW - dw) / 2;
     const dy: number = (this.canvasH - dh) / 2;
     // Clear only when the draw rect changed: a full-canvas fill before
     // every drawImage shows one black frame per repaint (visible flicker).
-    if (dw !== this.drawW || dh !== this.drawH || dx !== this.drawX ||
-      dy !== this.drawY) {
+    if (dw !== this.drawW || dh !== this.drawH || dy !== this.drawY) {
       ctx.fillStyle = '#000000';
       ctx.fillRect(0, 0, this.canvasW, this.canvasH);
     }
     this.pxScale = scale;
-    this.drawX = dx;
     this.drawY = dy;
     this.drawW = dw;
     this.drawH = dh;
     ctx.imageSmoothingEnabled = false;
-    ctx.drawImage(pm, dx, dy, dw, dh);
+    ctx.drawImage(pm, 0, dy, dw, dh);
   }
 
   /** Canvas px -> frame px coordinates of the displayed image. */
   private canvasToFrame(cx: number, cy: number): number[] {
-    const fx: number = (cx - this.drawX) / this.pxScale;
+    const fx: number = cx / this.pxScale;
     const fy: number = (cy - this.drawY) / this.pxScale;
     return [Math.max(0, Math.min(this.frameW - 1, fx)),
       Math.max(0, Math.min(this.frameH - 1, fy))];
