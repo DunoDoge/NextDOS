@@ -678,7 +678,11 @@ struct Index {
       }
     })
     .focusable(true)
-    .defaultFocus(true)
+    // An explicit defaultFocus(true) makes the initial page-focus descent land
+    // on the first focusable child — the invisible IME TextArea on touch
+    // devices — and the soft keyboard then rises at every launch. 2in1 has no
+    // imeLayer and keeps it so hardware keys work without a prior click.
+    .defaultFocus(IS_DESKTOP)
     .onKeyEvent((event: KeyEvent) => {
       this.handleKey(event);
     })
