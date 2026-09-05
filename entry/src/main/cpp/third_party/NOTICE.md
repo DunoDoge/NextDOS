@@ -18,6 +18,14 @@
   `src/cpu/cpu.cpp` keeps the normal core instead of `E_Exit` — HarmonyOS
   XPM rejects anonymous RWX mappings, which otherwise aborted the process
   when a protected-mode DOS program switched the auto core to dynrec.
+- Local dynrec emitter alignment patch (to be upstreamed to the `ohos`
+  branch): `src/cpu/core_dynrec/risc_armv8le.h` `gen_mov_memval_*_helper()`
+  gate the scaled-offset LDR/STR fast paths on `(data - addr_data)`
+  alignment instead of `data` alignment. When `&cpu_regs` is 8-misaligned
+  in .bss (it only needs 4-byte alignment), the unmasked `STR64_IMM` ADD
+  carried a misaligned offset into the Rn field, so the block-entry
+  `cache.block.running` store executed as `str x12, [x4, #912]` with x4=0
+  and segfaulted the first dynrec block ever run.
 - License: **GPL-2.0-or-later.** Linking DOSBox Staging into NextDOS makes
   the combined work subject to the GNU GPL v2 (or later). Distributing the
   application therefore requires shipping the corresponding source code of

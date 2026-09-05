@@ -346,7 +346,11 @@ static void gen_mov_dword_to_reg_imm(HostReg dest_reg,uint32_t imm) {
 static bool gen_mov_memval_to_reg_helper(HostReg dest_reg, uint64_t data, Bitu size, HostReg addr_reg, uint64_t addr_data) {
 	switch (size) {
 		case 8:
-			if (((data & 7) == 0) && (data >= addr_data) && (data < addr_data + 32768)) {
+			// the scaled imm12 cannot encode offsets that are not a
+			// multiple of 8, and the unmasked macro ADD would corrupt
+			// neighbouring register fields, so gate on offset alignment
+			// (addr_data itself may be misaligned, e.g. cpu_regs)
+			if ((((data - addr_data) & 7) == 0) && (data >= addr_data) && (data < addr_data + 32768)) {
 				cache_addd( LDR64_IMM(dest_reg, addr_reg, data - addr_data) );      // ldr dest_reg, [addr_reg, #(data - addr_data)]
 				return true;
 			} else if ((data < addr_data + 256) && (data >= addr_data - 256)) {
@@ -355,7 +359,7 @@ static bool gen_mov_memval_to_reg_helper(HostReg dest_reg, uint64_t data, Bitu s
 			}
 			break;
 		case 4:
-			if (((data & 3) == 0) && (data >= addr_data) && (data < addr_data + 16384)) {
+			if ((((data - addr_data) & 3) == 0) && (data >= addr_data) && (data < addr_data + 16384)) {
 				cache_addd( LDR_IMM(dest_reg, addr_reg, data - addr_data) );        // ldr dest_reg, [addr_reg, #(data - addr_data)]
 				return true;
 			} else if ((data < addr_data + 256) && (data >= addr_data - 256)) {
@@ -364,7 +368,7 @@ static bool gen_mov_memval_to_reg_helper(HostReg dest_reg, uint64_t data, Bitu s
 			}
 			break;
 		case 2:
-			if (((data & 1) == 0) && (data >= addr_data) && (data < addr_data + 8192)) {
+			if ((((data - addr_data) & 1) == 0) && (data >= addr_data) && (data < addr_data + 8192)) {
 				cache_addd( LDRH_IMM(dest_reg, addr_reg, data - addr_data) );       // ldrh dest_reg, [addr_reg, #(data - addr_data)]
 				return true;
 			} else if ((data < addr_data + 256) && (data >= addr_data - 256)) {
@@ -460,7 +464,10 @@ static void inline gen_mov_word_to_reg_imm(HostReg dest_reg,uint16_t imm) {
 static bool gen_mov_memval_from_reg_helper(HostReg src_reg, uint64_t data, Bitu size, HostReg addr_reg, uint64_t addr_data) {
 	switch (size) {
 		case 8:
-			if (((data & 7) == 0) && (data >= addr_data) && (data < addr_data + 32768)) {
+			// mirrored alignment constraint of the load helper above: a
+			// scaled imm12 offset that is not a multiple of 8 corrupts
+			// the encoded base register via carry in the unmasked ADD
+			if ((((data - addr_data) & 7) == 0) && (data >= addr_data) && (data < addr_data + 32768)) {
 				cache_addd( STR64_IMM(src_reg, addr_reg, data - addr_data) );       // str src_reg, [addr_reg, #(data - addr_data)]
 				return true;
 			} else if ((data < addr_data + 256) && (data >= addr_data - 256)) {
@@ -469,7 +476,7 @@ static bool gen_mov_memval_from_reg_helper(HostReg src_reg, uint64_t data, Bitu 
 			}
 			break;
 		case 4:
-			if (((data & 3) == 0) && (data >= addr_data) && (data < addr_data + 16384)) {
+			if ((((data - addr_data) & 3) == 0) && (data >= addr_data) && (data < addr_data + 16384)) {
 				cache_addd( STR_IMM(src_reg, addr_reg, data - addr_data) );         // str src_reg, [addr_reg, #(data - addr_data)]
 				return true;
 			} else if ((data < addr_data + 256) && (data >= addr_data - 256)) {
@@ -478,7 +485,7 @@ static bool gen_mov_memval_from_reg_helper(HostReg src_reg, uint64_t data, Bitu 
 			}
 			break;
 		case 2:
-			if (((data & 1) == 0) && (data >= addr_data) && (data < addr_data + 8192)) {
+			if ((((data - addr_data) & 1) == 0) && (data >= addr_data) && (data < addr_data + 8192)) {
 				cache_addd( STRH_IMM(src_reg, addr_reg, data - addr_data) );        // strh src_reg, [addr_reg, #(data - addr_data)]
 				return true;
 			} else if ((data < addr_data + 256) && (data >= addr_data - 256)) {

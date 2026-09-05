@@ -92,7 +92,13 @@ the license for users. Keep both, plus the in-app `LicenseSheet`, in sync with
   "Dynrec cache unavailable" to dosbox.log and stays on the normal core
   instead of `E_Exit`/abort. Keep that graceful fallback when touching the
   cache; the restricted `ohos.permission.kernel.ALLOW_WRITABLE_CODE_MEMORY`
-  is the only sanctioned way back to RWX (PC/2in1|Tablet only).
+  is the only sanctioned way back to RWX (PC/2in1|Tablet only). With the
+  permission granted dynrec really runs — and the ARM64 emitter
+  (`risc_armv8le.h`) must then gate its scaled-offset memval fast paths on
+  *offset* alignment: `&cpu_regs` is only 4-byte aligned in .bss, so an
+  8-byte access at a 4-mod-8 offset from it corrupts the encoded base
+  register (the unmasked macro ADD carries into Rn) and segfaults the
+  first translated block.
 - **Privacy consent is the AGC standardized dialog.** The app uses AGC
   standardized privacy hosting (`module.json5` metadata `appgallery_privacy_*`);
   the system itself pops the standardized privacy dialog on first launch.
