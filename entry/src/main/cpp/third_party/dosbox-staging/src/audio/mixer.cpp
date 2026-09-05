@@ -2710,7 +2710,22 @@ static void mixer_thread_loop()
 
 	const auto fade_step = compute_fade_step();
 
+	// Per-boot probe (local counter: fresh for every spawned thread): pins
+	// down which branch the loop takes after an embed in-process restart,
+	// when the output queue stays empty (audio stats report frames=0).
+	int probe_iter = 0;
+
 	while (!mixer.thread_should_quit) {
+		if (probe_iter < 3) {
+			LOG_MSG("MIXER: probe iter %d enter (paused=%d no_sound=%d ff=%d running=%d qsize=%d)",
+			        probe_iter,
+			        DOSBOX_IsPaused() ? 1 : 0,
+			        mixer.no_sound ? 1 : 0,
+			        mixer.fast_forward_mode ? 1 : 0,
+			        mixer.final_output.IsRunning() ? 1 : 0,
+			        static_cast<int>(mixer.final_output.Size()));
+		}
+		probe_iter++;
 		// Paused short-circuits BEFORE `mix_samples()` to keep frozen
 		// channel state out of the capture queue (we want bit-identical
 		// captures compared to not pausing at all). At this point the
@@ -2855,6 +2870,13 @@ static void mixer_thread_loop()
 		mixer.playback_gain.store(playback_gain, std::memory_order_relaxed);
 
 		mixer.final_output.BulkEnqueue(to_mix);
+		if (probe_iter < 4) {
+			// probe_iter was bumped at the top, so this is iteration
+			// probe_iter - 1 -- the same one the enter line above logged.
+			LOG_MSG("MIXER: probe iter %d enqueued %d frames",
+			        probe_iter - 1,
+			        static_cast<int>(to_mix.size()));
+		}
 	}
 }
 

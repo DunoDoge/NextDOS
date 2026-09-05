@@ -64,6 +64,8 @@ struct Index {
     await this.emu.bootstrap(ctx);
     this.emu.start();
     this.booted = true;
+    // Auto-mount may have restored the last session's folder via [autoexec].
+    this.folderMounted = this.emu.isFolderMounted();
     hilog.info(0x0000, TAG, 'NextDOS booted');
   }
 
@@ -311,6 +313,11 @@ struct Index {
     SettingsSheet({
       onClose: () => {
         this.showSettings = false;
+      },
+      emu: this.emu,
+      onRestarted: () => {
+        // reset() boots the engine running; keep the pause flag in sync.
+        this.paused = false;
       }
     })
   }
