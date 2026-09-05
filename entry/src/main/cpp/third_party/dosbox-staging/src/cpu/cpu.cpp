@@ -106,13 +106,13 @@ void CPU_Core_Simple_Init();
 
 #if C_DYNAMIC_X86
 void CPU_Core_Dyn_X86_Init();
-void CPU_Core_Dyn_X86_Cache_Init(bool enable_cache);
+bool CPU_Core_Dyn_X86_Cache_Init(bool enable_cache);
 void CPU_Core_Dyn_X86_Cache_Close();
 void CPU_Core_Dyn_X86_SetFPUMode(bool dh_fpu);
 
 #elif C_DYNREC
 void CPU_Core_Dynrec_Init();
-void CPU_Core_Dynrec_Cache_Init(bool enable_cache);
+bool CPU_Core_Dynrec_Cache_Init(bool enable_cache);
 void CPU_Core_Dynrec_Cache_Close();
 #endif
 
@@ -2184,13 +2184,22 @@ void CPU_SET_CRX(Bitu cr, Bitu value)
 
 #if C_DYNAMIC_X86
 			if (auto_determine_mode.auto_core) {
-				CPU_Core_Dyn_X86_Cache_Init(true);
-				cpudecoder = &CPU_Core_Dyn_X86_Run;
+				if (CPU_Core_Dyn_X86_Cache_Init(true)) {
+					cpudecoder = &CPU_Core_Dyn_X86_Run;
+				} else {
+					// W^X platform policy (e.g. HarmonyOS XPM) can make the
+					// dynamic core cache unusable; run interpretively
+					// instead of killing the process.
+					LOG_MSG("CPU: Dynamic core cache unavailable, staying on the normal core");
+				}
 			}
 #elif C_DYNREC
 			if (auto_determine_mode.auto_core) {
-				CPU_Core_Dynrec_Cache_Init(true);
-				cpudecoder = &CPU_Core_Dynrec_Run;
+				if (CPU_Core_Dynrec_Cache_Init(true)) {
+					cpudecoder = &CPU_Core_Dynrec_Run;
+				} else {
+					LOG_MSG("CPU: Dynrec cache unavailable, staying on the normal core");
+				}
 			}
 #endif
 			if (legacy_cycles_mode) {
@@ -3579,10 +3588,19 @@ public:
 		}
 
 #if C_DYNAMIC_X86
-		CPU_Core_Dyn_X86_Cache_Init((cpu_core == "dynamic") ||
-		                            (cpu_core == "dynamic_nodhfpu"));
+		if (!CPU_Core_Dyn_X86_Cache_Init((cpu_core == "dynamic") ||
+		                                 (cpu_core == "dynamic_nodhfpu"))) {
+			// W^X platform policy can make the dynamic core cache
+			// unusable; run interpretively instead of killing the process.
+			cpudecoder = &CPU_Core_Normal_Run;
+			LOG_MSG("CPU: Dynamic core cache unavailable, falling back to the normal core");
+		}
 #elif C_DYNREC
-		CPU_Core_Dynrec_Cache_Init(cpu_core == "dynamic");
+		if (!CPU_Core_Dynrec_Cache_Init(cpu_core == "dynamic") &&
+		    cpu_core == "dynamic") {
+			cpudecoder = &CPU_Core_Normal_Run;
+			LOG_MSG("CPU: Dynrec cache unavailable, falling back to the normal core");
+		}
 #endif
 	}
 

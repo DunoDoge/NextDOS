@@ -11,6 +11,13 @@
   OPT_SDL3_IMAGE), the `DOSBOX_OHOS_EMBED` embed mode, an audio output
   hook (MIXER_OhosDequeueOutput), and libc++-15 (OHOS NDK) compatibility
   fixes.
+- Local W^X patch (to be upstreamed to the `ohos` branch):
+  `src/cpu/dyn_cache.h` `cache_init()` retries a `PROT_READ|PROT_WRITE`
+  mmap when the RWX mapping is rejected and probes `mprotect(PROT_EXEC)`;
+  on failure the dynamic cores report themselves unusable and
+  `src/cpu/cpu.cpp` keeps the normal core instead of `E_Exit` — HarmonyOS
+  XPM rejects anonymous RWX mappings, which otherwise aborted the process
+  when a protected-mode DOS program switched the auto core to dynrec.
 - License: **GPL-2.0-or-later.** Linking DOSBox Staging into NextDOS makes
   the combined work subject to the GNU GPL v2 (or later). Distributing the
   application therefore requires shipping the corresponding source code of

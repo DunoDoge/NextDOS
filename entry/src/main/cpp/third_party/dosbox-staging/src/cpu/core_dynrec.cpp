@@ -346,9 +346,9 @@ Bits CPU_Core_Dynrec_Trap_Run() noexcept
 void CPU_Core_Dynrec_Init(void) {
 }
 
-void CPU_Core_Dynrec_Cache_Init(bool enable_cache) {
+bool CPU_Core_Dynrec_Cache_Init(bool enable_cache) {
 	// Initialize code cache and dynamic blocks
-	cache_init(enable_cache);
+	return cache_init(enable_cache);
 }
 
 void CPU_Core_Dynrec_Cache_Close(void) {

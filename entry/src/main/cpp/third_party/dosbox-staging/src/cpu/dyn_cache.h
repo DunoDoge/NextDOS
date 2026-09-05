@@ -950,11 +950,11 @@ static inline void dyn_cache_invalidate([[maybe_unused]] void *ptr,
 
 static bool cache_initialized = false;
 
-static void cache_init(bool enable) {
+static bool cache_init(bool enable) {
 	if (enable) {
 		// see if cache is already initialized
 		if (cache_initialized) {
-			return;
+			return true;
 		}
 		cache_initialized = true;
 		cache.block.free = &cache_blocks[0];
@@ -981,13 +981,24 @@ static void cache_init(bool enable) {
 			cache_code_start_ptr = static_cast<uint8_t *>(lp_vmem);
 #elif defined(HAVE_MMAP)
 			int map_flags = MAP_PRIVATE | MAP_ANON;
-			int prot_flags = PROT_READ | PROT_WRITE | PROT_EXEC;
 #if defined(HAVE_MAP_JIT)
 			map_flags |= MAP_JIT;
 #endif
-			cache_code_start_ptr=static_cast<uint8_t *>(mmap(nullptr, cache_code_size, prot_flags, map_flags, -1, 0));
+			// Prefer the classic RWX mapping. Hardened W^X kernels
+			// (e.g. HarmonyOS XPM) reject RW+X anonymous mappings
+			// outright, so fall back to a plain RW mapping: the
+			// per-page W^X flow (C_PER_PAGE_W_OR_X) flags the cache
+			// executable via mprotect() once the code is written.
+			int prot_flags       = PROT_READ | PROT_WRITE | PROT_EXEC;
+			cache_code_start_ptr = static_cast<uint8_t *>(mmap(nullptr, cache_code_size, prot_flags, map_flags, -1, 0));
 			if (cache_code_start_ptr == MAP_FAILED) {
-				E_Exit("DYNCACHE: Failed memory-mapping cache memory because: %s", strerror(errno));
+				prot_flags           = PROT_READ | PROT_WRITE;
+				cache_code_start_ptr = static_cast<uint8_t *>(mmap(nullptr, cache_code_size, prot_flags, map_flags, -1, 0));
+			}
+			if (cache_code_start_ptr == MAP_FAILED) {
+				LOG_MSG("DYNCACHE: Failed memory-mapping cache memory because: %s", strerror(errno));
+				cache_initialized = false;
+				return false;
 			}
 #else
 			cache_code_start_ptr=static_cast<uint8_t *>(malloc(cache_code_size));
@@ -1002,6 +1013,24 @@ static void cache_init(bool enable) {
 
 			cache_code_link_blocks=cache_code;
 			cache_code=cache_code+HostPageSize;
+#if defined(HAVE_MMAP)
+			if (prot_flags == (PROT_READ | PROT_WRITE)) {
+				// Exec-less mapping: verify the kernel actually allows
+				// flagging the cache executable before committing to the
+				// dynamic core; otherwise report the cache unusable and
+				// let the caller stay on the normal core.
+				if (mprotect(cache_code_link_blocks, HostPageSize, PROT_READ | PROT_EXEC) != 0) {
+					LOG_MSG("DYNCACHE: mprotect(PROT_EXEC) rejected by the platform: %s", strerror(errno));
+					munmap(cache_code_start_ptr, cache_code_size);
+					cache_code_start_ptr   = nullptr;
+					cache_code             = nullptr;
+					cache_code_link_blocks = nullptr;
+					cache_initialized      = false;
+					return false;
+				}
+				mprotect(cache_code_link_blocks, HostPageSize, PROT_READ | PROT_WRITE);
+			}
+#endif
 			CacheBlock *block = cache_getblock();
 			cache.block.first=block;
 			cache.block.active=block;
@@ -1064,7 +1093,9 @@ static void cache_init(bool enable) {
 			newpage->next = cache.free_pages;
 			cache.free_pages=newpage;
 		}
+		return true;
 	}
+	return true;
 }
 
 static void cache_close(void) {

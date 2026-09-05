@@ -477,9 +477,9 @@ void CPU_Core_Dyn_X86_Init(void) {
 #	endif
 }
 
-void CPU_Core_Dyn_X86_Cache_Init(bool enable_cache) {
+bool CPU_Core_Dyn_X86_Cache_Init(bool enable_cache) {
 	/* Initialize code cache and dynamic blocks */
-	cache_init(enable_cache);
+	return cache_init(enable_cache);
 }
 
 void CPU_Core_Dyn_X86_Cache_Close(void) {

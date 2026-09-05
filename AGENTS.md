@@ -84,6 +84,15 @@ the license for users. Keep both, plus the in-app `LicenseSheet`, in sync with
   never restarts the engine — `DosEmulator.mountFolder` types
   `mount c <dir>` + `c:` into the *running* guest via `typeIntoGuest`
   (config is regenerated only so future boots re-mount). Keep it that way.
+- **Dynrec under W^X.** Any guest protected-mode program (32-bit DOS
+  extender, e.g. mpxplay) makes `core=auto` switch to the dynamic
+  recompiler on first PM entry. HarmonyOS XPM rejects anonymous RWX
+  mappings, so the vendored `dyn_cache.h` falls back to a RW mapping with
+  a `mprotect(PROT_EXEC)` probe; if either step fails the engine logs
+  "Dynrec cache unavailable" to dosbox.log and stays on the normal core
+  instead of `E_Exit`/abort. Keep that graceful fallback when touching the
+  cache; the restricted `ohos.permission.kernel.ALLOW_WRITABLE_CODE_MEMORY`
+  is the only sanctioned way back to RWX (PC/2in1|Tablet only).
 - **Privacy consent is the AGC standardized dialog.** The app uses AGC
   standardized privacy hosting (`module.json5` metadata `appgallery_privacy_*`);
   the system itself pops the standardized privacy dialog on first launch.
