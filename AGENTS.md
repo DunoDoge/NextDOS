@@ -12,7 +12,8 @@ entry/src/main/
     pages/Index.ets          # the only @Entry page; owns boot, state, device branching,
                              #   IME text input (imeLayer: invisible TextArea + tap-to-focus)
     view/                    # UI components: EmulatorScreen, ControlKeyBar (touch),
-                             #   SettingsSheet (About: version/repo/privacy/license),
+                             #   SettingsSheet (模拟器: cpu/mute/auto-mount/restart,
+                             #   About: version/repo/privacy/license),
                              #   LicenseSheet (license sub-page over the sheet)
     model/                   # non-UI: DosEmulator (NAPI controller), DosKeyMap, MountFolder
     entryability/            # EntryAbility: window setup (immersive, orientation, decor)
@@ -107,6 +108,14 @@ the license for users. Keep both, plus the in-app `LicenseSheet`, in sync with
   aspect-fit (letterboxed, never cropped or stretched). Windows narrower
   than 600 vp force landscape (`window.Orientation.LANDSCAPE`) and the
   settings sheet is centered only above 600 vp.
+- **Audio has no runtime mixer API.** The `[mixer]` section (nosound, rate,
+  prebuffer) is boot-time only; the settings sheet restarts the engine to
+  apply it. When diagnosing "no sound", read the periodic `OHOS: audio stats`
+  lines in dosbox.log (filesDir): `peak>0` proves audible frames reach the
+  device sink; `peak=0` with frames flowing usually just means nothing in the
+  guest is producing sound (the DOS prompt is silent — drive a PC-speaker
+  beep through DEBUG ports 43h/42h/61h to test). A "Sound output disabled"
+  line means `nosound=on` took effect and the OHAudio renderer never starts.
 - **ArkUI popups.** `bindSheet`/`bindPopup`/`bindContentCover` `isShow` is
   one-way: write the state back in `onDisappear`, or drag/ESC closes desync
   the UI. To open a sub-page from inside the open settings sheet (e.g. the
@@ -120,13 +129,18 @@ the license for users. Keep both, plus the in-app `LicenseSheet`, in sync with
   they already reach the guest through the field content diff; the root
   handler also skips everything while `imeFocused` is set.
 - Settings that the sheet edits live go through `AppStorage` (`@StorageLink`)
-  and persist via a small `AppSettings`-style store; seed AppStorage in
-  `aboutToAppear` before components read the links. (No live-edited settings
-  exist right now — the sheet currently holds only the About group:
-  version, repository link, privacy policy link, and the license sub-page;
-  the pattern applies
-  when adding some. The old keyboard visibility/opacity settings died with
-  the in-app keyboard.)
+  and persist via the `AppSettings` preferences store (`model/AppSettings.ets`);
+  `AppSettings.load()` seeds AppStorage during boot (`DosEmulator.bootstrap`)
+  before components read the links, and the setters write memory + AppStorage
+  + store in one call. Existing settings: CPU speed (`[cpu] cpu_cycles` /
+  `cpu_cycles_protected` — the legacy `cycles` prop is deprecated in the
+  staged fork), mute (`[mixer] nosound`, boot-time only), auto-mount of the
+  last C: folder at boot, plus the About group (version, repository link,
+  privacy policy link, and the license sub-page). Engine config is boot-time:
+  changing CPU/mute only regenerates the config (`DosEmulator.rewriteConfig`);
+  the sheet's 重启模拟器 row (`host_restart`) applies it. Do not re-introduce
+  a runtime `config -set` injection path — this fork ships no CONFIG guest
+  program.
 
 ## Docs to read first
 

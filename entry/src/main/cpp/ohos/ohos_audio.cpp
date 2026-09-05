@@ -6,6 +6,7 @@
 // MIXER_OhosDequeueOutput() (see the fork's audio/mixer.cpp embed hook).
 
 #include <atomic>
+#include <cmath>
 
 #include <ohaudio/native_audiorenderer.h>
 #include <ohaudio/native_audiostreambuilder.h>
@@ -13,9 +14,38 @@
 
 #include "audio/mixer.h"
 
+#include "ohos_embed.h"
+
 static OH_AudioRenderer* g_renderer = nullptr;
 static std::atomic<bool> g_started(false);
-static std::atomic<int> g_underruns(0);
+
+/* Periodic audio-path stats, logged to dosbox.log: with hilog unable to show
+ * whether frames actually reach the device sink, the counters below tell the
+ * failure modes apart (callback not firing / queue dry / engine paused-by-
+ * design filling the queue with silence / audible data muted elsewhere). */
+static std::atomic<long> g_stat_callbacks(0);
+static std::atomic<long> g_stat_frames(0);
+static std::atomic<long> g_stat_underruns(0);
+
+static void log_stats(const bool underrun, const long frames, const float peak)
+{
+	const long callbacks = g_stat_callbacks.fetch_add(1,
+	                                                std::memory_order_relaxed);
+	const long total_frames = g_stat_frames.fetch_add(frames,
+	                                                  std::memory_order_relaxed);
+	if (underrun) {
+		g_stat_underruns.fetch_add(1, std::memory_order_relaxed);
+	}
+	if (callbacks % 250 == 0) {
+		LOG_MSG("OHOS: audio stats cb=%ld frames=%ld underruns=%ld/this-cb=%d peak=%.4f paused=%d",
+		        callbacks,
+		        total_frames,
+		        g_stat_underruns.load(std::memory_order_relaxed),
+		        underrun ? 1 : 0,
+		        static_cast<double>(peak),
+		        nextdos::host_is_paused() ? 1 : 0);
+	}
+}
 
 static OH_AudioData_Callback_Result onWriteData(OH_AudioRenderer* renderer,
                                                 void* userData,
@@ -36,11 +66,18 @@ static OH_AudioData_Callback_Result onWriteData(OH_AudioRenderer* renderer,
 	        MIXER_OhosDequeueOutput(static_cast<float*>(audioData),
 	                                static_cast<size_t>(max_frames));
 
-	if (frames < static_cast<size_t>(max_frames)) {
-		// Underrun (mixer queue dry): the dequeue helper already wrote
-		// silence for the shortfall, so the buffer stays valid.
-		g_underruns.fetch_add(1, std::memory_order_relaxed);
+	// Underrun (mixer queue dry): the dequeue helper already wrote silence
+	// for the shortfall, so the buffer stays valid.
+	const bool underrun = frames < static_cast<size_t>(max_frames);
+	const auto* samples = static_cast<const float*>(audioData);
+	float peak = 0.0f;
+	for (int32_t i = 0; i < max_frames * 2; ++i) {
+		const float amp = std::fabs(samples[i]);
+		if (amp > peak) {
+			peak = amp;
+		}
 	}
+	log_stats(underrun, static_cast<long>(frames), peak);
 	return AUDIO_DATA_CALLBACK_RESULT_VALID;
 }
 
@@ -88,7 +125,9 @@ bool ohos_audio_start(int sample_rate_hz, int blocksize_in_frames)
 		return false;
 	}
 
-	g_underruns.store(0, std::memory_order_relaxed);
+	g_stat_callbacks.store(0, std::memory_order_relaxed);
+	g_stat_frames.store(0, std::memory_order_relaxed);
+	g_stat_underruns.store(0, std::memory_order_relaxed);
 	g_started.store(true, std::memory_order_release);
 	LOG_MSG("OHOS: Audio started (%d Hz stereo F32)", sample_rate_hz);
 	return true;

@@ -2,8 +2,11 @@ import testNapi from 'libentry.so';
 import type { FrameInfo } from 'libentry.so';
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { common } from '@kit.AbilityKit';
+import { BusinessError } from '@kit.BasicServicesKit';
 import { fileIo as fs } from '@kit.CoreFileKit';
 import { KeyCode } from '@kit.InputKit';
+import { AppSettings } from './AppSettings';
+import { MountFolder } from './MountFolder';
 
 const TAG: string = 'NextDOS';
 const FRAME_INTERVAL_MS: number = 16;
@@ -32,10 +35,22 @@ export class DosEmulator {
 
   /** First-run: copy the boot floppy image into the sandbox and write the config.
    * The DOSBox resource tree is deployed natively from rawfile (see
-   * ohos_resources.cpp). */
+   * ohos_resources.cpp). Settings must load before the config generator
+   * reads them; auto-mount restores the last session's folder through the
+   * [autoexec] mount and boots unmounted when the folder went away. */
   async bootstrap(ctx: common.UIAbilityContext): Promise<void> {
+    await AppSettings.load(ctx);
     await this.copyRawFile(ctx, 'fd.img');
     this.confPath = ctx.filesDir + '/dosbox.conf';
+    if (AppSettings.autoMount && AppSettings.lastMountDir !== '') {
+      try {
+        MountFolder.verifyAccess(AppSettings.lastMountDir);
+        this.mountedFolder = AppSettings.lastMountDir;
+      } catch (error) {
+        const err = error as BusinessError;
+        hilog.warn(0x0000, TAG, 'auto-mount skipped, folder gone: %{public}s', err.message);
+      }
+    }
     this.writeConfig();
     testNapi.initResources(ctx.resourceManager);
     testNapi.init(this.confPath);
@@ -51,7 +66,11 @@ export class DosEmulator {
     hilog.info(0x0000, TAG, 'copied rawfile %{public}s to sandbox', name);
   }
 
-  /** Regenerates the dosbox config; the C: mount lives in [autoexec]. */
+  /** Regenerates the dosbox config; the C: mount lives in [autoexec].
+   * CPU speed uses the modern cpu_cycles settings (the legacy `cycles` is
+   * deprecated in dosbox-staging): 'max' caps both real/protected mode,
+   * a fixed value plus protected=auto applies one speed to both. [mixer]
+   * nosound is boot-time only, so mute and cycles take effect on restart. */
   private writeConfig(): void {
     let conf = '[sdl]\n';
     conf += 'presentation_mode = dos-rate\n';
@@ -59,7 +78,11 @@ export class DosEmulator {
     conf += 'fullscreen = off\n';
     conf += '\n';
     conf += '[cpu]\n';
-    conf += 'cycles = max\n';
+    conf += 'cpu_cycles = ' + AppSettings.cpuCycles + '\n';
+    conf += 'cpu_cycles_protected = ' + (AppSettings.cpuCycles === 'max' ? 'max' : 'auto') + '\n';
+    conf += '\n';
+    conf += '[mixer]\n';
+    conf += 'nosound = ' + (AppSettings.mute ? 'on' : 'off') + '\n';
     conf += '\n';
     conf += '[autoexec]\n';
     if (this.mountedFolder !== '') {
@@ -70,6 +93,15 @@ export class DosEmulator {
     const file = fs.openSync(this.confPath, fs.OpenMode.READ_WRITE | fs.OpenMode.CREATE | fs.OpenMode.TRUNC);
     fs.writeSync(file.fd, conf);
     fs.closeSync(file);
+  }
+
+  /** Regenerates the config from the current AppSettings so the next
+   * start()/reset() boots with them (boot-time settings: restart applies). */
+  rewriteConfig(): void {
+    if (this.confPath === '') {
+      return;
+    }
+    this.writeConfig();
   }
 
   /** Spawns the emulator thread. Must not be called while already running. */
@@ -90,6 +122,7 @@ export class DosEmulator {
   async mountFolder(dir: string): Promise<void> {
     const wasRunning: boolean = this.running;
     this.mountedFolder = dir;
+    AppSettings.setLastMountDir(dir);
     this.writeConfig();
     testNapi.mountFolder(dir);
     if (!wasRunning) {
@@ -102,7 +135,9 @@ export class DosEmulator {
     await this.typeIntoGuest('c:\r');
   }
 
-  /** Unmounts C: by typing `mount -u c` into the running guest. */
+  /** Unmounts C: by typing `mount -u c` into the running guest. Only ends
+   * this session's mount — lastMountDir is kept so auto-mount can restore
+   * the folder on the next boot (the auto-mount toggle governs that). */
   async unmountFolder(): Promise<void> {
     const wasRunning: boolean = this.running;
     this.mountedFolder = '';
@@ -116,6 +151,10 @@ export class DosEmulator {
 
   isFolderMounted(): boolean {
     return this.mountedFolder !== '';
+  }
+
+  isRunning(): boolean {
+    return this.running;
   }
 
   stop(): void {
