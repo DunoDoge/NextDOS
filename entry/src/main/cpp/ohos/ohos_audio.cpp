@@ -106,6 +106,23 @@ bool ohos_audio_start(int sample_rate_hz, int blocksize_in_frames)
 	OH_AudioStreamBuilder_SetLatencyMode(builder,
 	                                     AUDIOSTREAM_LATENCY_MODE_NORMAL);
 	OH_AudioStreamBuilder_SetRendererInfo(builder, AUDIOSTREAM_USAGE_GAME);
+
+	// Pin the per-callback request to 20 ms. Left unset, the system picks
+	// up to ~100 ms per callback on some devices; the mixer's final_output
+	// queue only holds blocksize + prebuffer (~41 ms at defaults), so every
+	// callback then short-fills and content delivery collapses to ~44%
+	// throughput (measured: 1984 frames delivered per 4460-frame request),
+	// chopping playback into sound/silence slices. 20 ms fits the queue
+	// with margin; if rejected, the prebuffer bump in writeConfig is the
+	// backstop (queue capacity >= max legal 100 ms request).
+	ret = OH_AudioStreamBuilder_SetFrameSizeInCallback(
+	        builder, static_cast<int32_t>(sample_rate_hz / 50));
+	if (ret != AUDIOSTREAM_SUCCESS) {
+		LOG_ERR("OHOS: SetFrameSizeInCallback(%d frames) rejected: %d",
+		        sample_rate_hz / 50,
+		        ret);
+	}
+
 	OH_AudioStreamBuilder_SetRendererWriteDataCallback(builder, onWriteData,
 	                                                   nullptr);
 

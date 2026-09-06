@@ -83,6 +83,11 @@ export class DosEmulator {
     conf += '\n';
     conf += '[mixer]\n';
     conf += 'nosound = ' + (AppSettings.mute ? 'on' : 'off') + '\n';
+    // final_output queue = blocksize + prebuffer frames must cover the
+    // largest per-callback request OHAudio may issue (up to 100 ms in
+    // NORMAL latency mode) or every callback short-fills and playback
+    // throughput collapses; 100 is also the engine's MaxPrebufferMs clamp.
+    conf += 'prebuffer = 100\n';
     conf += '\n';
     conf += '[autoexec]\n';
     if (this.mountedFolder !== '') {
