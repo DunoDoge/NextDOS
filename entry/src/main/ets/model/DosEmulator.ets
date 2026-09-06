@@ -80,6 +80,14 @@ export class DosEmulator {
     conf += '[cpu]\n';
     conf += 'cpu_cycles = ' + AppSettings.cpuCycles + '\n';
     conf += 'cpu_cycles_protected = ' + (AppSettings.cpuCycles === 'max' ? 'max' : 'auto') + '\n';
+    // core=auto runs real-mode guests on the interpreter only (dynrec
+    // engages at first protected-mode entry), which caps CPU-bound guest
+    // work like QuickView MP3 decode below real time on mobile hosts —
+    // playback then alternates between buffer-drain bursts and seconds of
+    // starvation silence. Force the recompiler; where XPM W^X denies the
+    // dyn cache the engine logs "Dynrec cache unavailable" and stays on
+    // the normal core (same behaviour as today, no regression path).
+    conf += 'core = dynamic\n';
     conf += '\n';
     conf += '[mixer]\n';
     conf += 'nosound = ' + (AppSettings.mute ? 'on' : 'off') + '\n';

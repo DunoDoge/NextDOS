@@ -12,6 +12,16 @@
     "deliveryWithInstall": true,
     "installationFree": false,
     "pages": "$profile:main_pages",
+    // Restricted ACL permission (allowed by the debug profile dynrec-test.p7b):
+    // lets mprotect(PROT_EXEC) succeed so the dynamic recompiler can map its
+    // code cache; without it DYNCACHE falls back to the normal core and
+    // real-mode CPU-bound guests (e.g. QuickView MP3 decode) starve below
+    // real time. PC/2in1 only per platform policy.
+    "requestPermissions": [
+      {
+        "name": "ohos.permission.kernel.ALLOW_WRITABLE_CODE_MEMORY"
+      }
+    ],
     // AGC standardized privacy hosting (debug/local-install path; store
     // builds take the hosted config from AGC). The system pops the
     // standardized privacy dialog itself — never self-draw one, AppGallery
