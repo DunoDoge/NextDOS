@@ -31,7 +31,9 @@
         "name": "EntryAbility",
         "srcEntry": "./ets/entryability/EntryAbility.ets",
         "description": "$string:EntryAbility_desc",
-        "icon": "$media:icon",
+        // No ability-level "icon" here on purpose: it would override the
+        // app.json5 layered icon, and AGC review flags the flattened legacy
+        // single-layer image (must be the 1024x1024 layered icon instead).
         "label": "$string:EntryAbility_label",
         "startWindowIcon": "$media:icon_startwindow",
         "startWindowBackground": "$color:start_window_background",

@@ -1,7 +1,7 @@
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { common } from '@kit.AbilityKit';
 import { BusinessError, deviceInfo } from '@kit.BasicServicesKit';
-import { KeyboardAvoidMode, window } from '@kit.ArkUI';
+import { display, KeyboardAvoidMode, window } from '@kit.ArkUI';
 import { KeyCode } from '@kit.InputKit';
 import { privacyManager } from '@kit.AppGalleryKit';
 import { DosEmulator } from '../model/DosEmulator';
@@ -42,9 +42,17 @@ struct Index {
   // app symbols must stop short of it (left of the three buttons).
   @State titleBarHeight: number = 44;
   @State threeButtonWidth: number = 0;
+  // Navigation gesture-indicator inset in vp for the bottom control overlay:
+  // read from the window avoid area, refreshed via avoidAreaChange (rotation,
+  // fold). Stays 0 when the window reports no indicator (2in1).
+  @State navInsetVp: number = 0;
   private emu: DosEmulator = new DosEmulator();
   private autoPaused: boolean = false;
   private mainWindow: window.Window | null = null;
+  // Separate from mainWindow (only ever set on 2in1 by trackTitleButtons):
+  // holds the touch-device window so the avoidAreaChange listener can be
+  // detached in aboutToDisappear.
+  private navIndicatorWindow: window.Window | null = null;
 
   aboutToAppear(): void {
     if (!IS_DESKTOP) {
@@ -56,6 +64,18 @@ struct Index {
     this.initPrivacy();
     if (IS_DESKTOP) {
       this.trackTitleButtons();
+    } else {
+      // The bottom overlay must clear the gesture-indicator area.
+      this.trackNavIndicator();
+    }
+  }
+
+  aboutToDisappear(): void {
+    // Detach the avoid-area listener with the page: the window outlives the
+    // component and the callback would otherwise write into a dead @State.
+    if (this.navIndicatorWindow) {
+      this.navIndicatorWindow.off('avoidAreaChange');
+      this.navIndicatorWindow = null;
     }
   }
 
@@ -160,6 +180,44 @@ struct Index {
       }
     } catch (error) {
       hilog.error(0x0000, TAG, 'get title button rect failed: %{public}s', JSON.stringify(error));
+    }
+  }
+
+  /**
+   * Touch devices: track the navigation gesture-indicator avoid area so the
+   * bottom control overlay keeps clear of it (edge-to-edge layout extends
+   * behind the hidden indicator). Re-read on avoidAreaChange, which also
+   * covers rotation and fold changes.
+   */
+  private async trackNavIndicator(): Promise<void> {
+    try {
+      const win = await window.getLastWindow(getContext(this));
+      this.navIndicatorWindow = win;
+      this.updateNavInset();
+      win.on('avoidAreaChange', (data: window.AvoidAreaOptions) => {
+        if (data.type === window.AvoidAreaType.TYPE_NAVIGATION_INDICATOR) {
+          this.updateNavInset();
+        }
+      });
+    } catch (error) {
+      // No usable window (unexpected on touch devices): keep the inset at 0;
+      // the overlay padding still holds its own floor.
+      hilog.error(0x0000, TAG, 'get window for nav indicator failed: %{public}s', JSON.stringify(error));
+    }
+  }
+
+  private updateNavInset(): void {
+    if (!this.navIndicatorWindow) {
+      return;
+    }
+    try {
+      const area = this.navIndicatorWindow.getWindowAvoidArea(window.AvoidAreaType.TYPE_NAVIGATION_INDICATOR);
+      // Guard density: a failed lookup must yield 0, not NaN — Math.max(NaN)
+      // would poison the padding floor in controlOverlay.
+      const density: number = display.getDefaultDisplaySync().densityPixels;
+      this.navInsetVp = density > 0 ? area.bottomRect.height / density : 0;
+    } catch (error) {
+      hilog.error(0x0000, TAG, 'read nav indicator area failed: %{public}s', JSON.stringify(error));
     }
   }
 
@@ -596,6 +654,12 @@ struct Index {
       }
     }
     .width('100%')
+    // Keep the overlay above the gesture indicator: the reported avoid area
+    // can be 0 while the system bars are hidden edge-to-edge (and 2in1 has
+    // none), so hold a 28vp floor — store review requires controls to sit
+    // >= 28vp above the navigation indicator. Applies to both bar states;
+    // HitTestMode.None keeps the padded strip touch-transparent.
+    .padding({ bottom: Math.max(this.navInsetVp, 28) })
     .hitTestBehavior(HitTestMode.None)
   }
 
