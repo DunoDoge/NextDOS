@@ -19,3 +19,4 @@ build-profile.json5
 .native-x64-*.log
 .entry/src/main/cpp/.hvigor/
 entry/src/main/cpp/.hvigor/
+/.hmos-flow/
