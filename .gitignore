@@ -20,3 +20,4 @@ build-profile.json5
 .entry/src/main/cpp/.hvigor/
 entry/src/main/cpp/.hvigor/
 /.hmos-flow/
+/.workbuddy/
