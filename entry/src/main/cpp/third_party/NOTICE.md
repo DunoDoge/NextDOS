@@ -59,6 +59,54 @@
   cross `--target`; the patch lives in the probe clone, not vendored here).
 - License: libpng-2.0 (PNG Reference License)
 
+## libslirp (user-mode NAT backend for the emulated NE2000 card)
+- Path: `entry/src/main/cpp/third_party/libslirp/` (source subset:
+  `src/*.c`, `src/*.h` + `COPYRIGHT`; meson/tests/docs not vendored)
+- Source: https://gitlab.freedesktop.org/slirp/libslirp (tag `v4.8.0`)
+- Purpose: the engine's `src/network/ethernet_slirp.cpp` backend normally
+  `dlopen()`s `libslirp.so.0`; OHOS ships no such library, so libslirp is
+  built as a static library and linked into `libentry.so` (see the
+  `DOSBOX_STATIC_SLIRP` local patch below). The vendored version must stay
+  **v4.8.0**: it matches the fork's public header
+  `src/libs/include/slirp/libslirp.h` line for line.
+- License: **BSD-3-Clause** (see `libslirp/COPYRIGHT`).
+
+## glib compatibility shim (hand-written, for libslirp)
+- Path: `entry/src/main/cpp/third_party/libslirp/glib.h` +
+  `glib_shim.c`
+- Source: original code for NextDOS (not a third-party component)
+- Purpose: libslirp depends on glib-2.0, but only on a small symbol surface
+  (allocation, string/GString helpers, GRand, GError, logging macros,
+  `g_parse_debug_string`, and the unused `g_spawn*`/`g_shell_parse_argv`
+  path). This header + implementation cover exactly that surface instead of
+  shipping real glib into the HAP. Memory/string/GString semantics follow
+  upstream glib; `g_spawn*` and `g_shell_parse_argv` log and report failure
+  (the engine's slirp backend never calls them). Logging goes through the
+  OHOS hilog NDK (domain `0x0000`, tag `NextDOS`).
+- License: **GPL-2.0-or-later** (part of the combined NextDOS work).
+
+## Local libslirp static-link patch (to be upstreamed to the `ohos` branch)
+- Path: `entry/src/main/cpp/third_party/dosbox-staging/src/network/ethernet_slirp.cpp`
+- `DOSBOX_STATIC_SLIRP` (defined by NextDOS' `cpp/CMakeLists.txt`) adds a
+  build branch that binds the libslirp function-pointer table to the
+  linked-in `&::slirp_*` symbols at static-init time and makes
+  `load_libslirp_dynlib()` return `Success` unconditionally. The original
+  `dlopen()` path - and its failure handling (`LOG_WARNING`, `ne2000` set to
+  off) - is left completely intact for builds that do not define the macro,
+  so other platforms are unaffected.
+
+## Local configurable virtual-network patch (to be upstreamed to the `ohos` branch)
+- Paths: `entry/src/main/cpp/third_party/dosbox-staging/src/network/ethernet.cpp`
+  and `src/network/ethernet_slirp.cpp`
+- The slirp backend used to hard-code the virtual NAT network
+  (`10.0.2.0/24`, gateway `10.0.2.2`, DNS `10.0.2.3`, first DHCP address
+  `10.0.2.15`). Four new `[ethernet]` string keys - `slirp_netmask`,
+  `slirp_host`, `slirp_dns`, `slirp_dhcp_start` - now feed those values so
+  the app can expose them; the network address is derived as
+  `slirp_host & slirp_netmask`. An unparseable set, or one whose DHCP pool
+  falls outside the derived network, logs a warning and falls back to the
+  defaults as a whole.
+
 ## Engine-vendored libraries
 DOSBox Staging vendors its own third-party libraries under
 `third_party/dosbox-staging/src/libs/` (loguru, enet, ESFMu, Nuked OPL,

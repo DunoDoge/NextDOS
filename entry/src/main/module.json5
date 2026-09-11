@@ -11,6 +11,14 @@
     ],
     "deliveryWithInstall": true,
     "installationFree": false,
+    // system_grant app permission: declared only, no runtime dialog/ACL. The
+    // slirp NAT backend opens host sockets for the emulated NE2000 card, so
+    // the guest's outbound traffic needs INTERNET at the process level.
+    "requestPermissions": [
+      {
+        "name": "ohos.permission.INTERNET"
+      }
+    ],
     "pages": "$profile:main_pages",
     // AGC standardized privacy hosting (debug/local-install path; store
     // builds take the hosted config from AGC). The system pops the

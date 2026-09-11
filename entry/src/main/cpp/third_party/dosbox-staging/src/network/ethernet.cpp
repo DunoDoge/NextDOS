@@ -114,6 +114,35 @@ static void init_ethernet_config_settings(SectionProp& section)
 	                       "default). The format is the same as for TCP port forwards.");
 
 	pstring->SetEnabledOptions({"SLIRP"});
+
+	/* NextDOS local patch: the virtual NAT network parameters were previously
+	 * hard-coded in ethernet_slirp.cpp. They are exposed here so the app's
+	 * network settings can override them; the network address itself is
+	 * derived by the slirp backend as slirp_host & slirp_netmask. */
+	pstring = section.AddString("slirp_netmask", WhenIdle, "255.255.255.0");
+	pstring->SetOptionHelp("SLIRP",
+	                       "Subnet mask of the virtual slirp LAN ('255.255.255.0' by default).");
+
+	pstring->SetEnabledOptions({"SLIRP"});
+
+	pstring = section.AddString("slirp_host", WhenIdle, "10.0.2.2");
+	pstring->SetOptionHelp("SLIRP",
+	                       "IP of the virtual gateway and DHCP service ('10.0.2.2' by default).");
+
+	pstring->SetEnabledOptions({"SLIRP"});
+
+	pstring = section.AddString("slirp_dns", WhenIdle, "10.0.2.3");
+	pstring->SetOptionHelp("SLIRP",
+	                       "IP of the virtual DNS server ('10.0.2.3' by default).");
+
+	pstring->SetEnabledOptions({"SLIRP"});
+
+	pstring = section.AddString("slirp_dhcp_start", WhenIdle, "10.0.2.15");
+	pstring->SetOptionHelp("SLIRP",
+	                       "First IP handed out by DHCP, i.e. the guest's own IP\n"
+	                       "('10.0.2.15' by default).");
+
+	pstring->SetEnabledOptions({"SLIRP"});
 }
 
 void ETHERNET_Init()

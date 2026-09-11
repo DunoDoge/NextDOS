@@ -5,7 +5,7 @@ import { common } from '@kit.AbilityKit';
 import { BusinessError } from '@kit.BasicServicesKit';
 import { fileIo as fs } from '@kit.CoreFileKit';
 import { KeyCode } from '@kit.InputKit';
-import { AppSettings } from './AppSettings';
+import { AppSettings, NetworkParams } from './AppSettings';
 import { MountFolder } from './MountFolder';
 
 const TAG: string = 'NextDOS';
@@ -70,8 +70,14 @@ export class DosEmulator {
    * CPU speed uses the modern cpu_cycles settings (the legacy `cycles` is
    * deprecated in dosbox-staging): 'max' caps both real/protected mode,
    * a fixed value plus protected=auto applies one speed to both. [mixer]
-   * nosound is boot-time only, so mute and cycles take effect on restart. */
+   * nosound is boot-time only, so mute and cycles take effect on restart.
+   * [ethernet]/[ipx] are the network settings: the NE2000 card runs on the
+   * slirp user-mode NAT backend (statically linked, see cpp/CMakeLists.txt),
+   * port forwards are passed through verbatim, and the virtual network
+   * parameters always come from resolvedNetworkParams() so the generated
+   * config matches the network slirp actually starts on. */
   private writeConfig(): void {
+    const net: NetworkParams = AppSettings.resolvedNetworkParams();
     let conf = '[sdl]\n';
     conf += 'presentation_mode = dos-rate\n';
     conf += 'vsync = off\n';
@@ -88,6 +94,18 @@ export class DosEmulator {
     // NORMAL latency mode) or every callback short-fills and playback
     // throughput collapses; 100 is also the engine's MaxPrebufferMs clamp.
     conf += 'prebuffer = 100\n';
+    conf += '\n';
+    conf += '[ethernet]\n';
+    conf += 'ne2000 = ' + (AppSettings.netNe2000 ? 'on' : 'off') + '\n';
+    conf += 'tcp_port_forwards = ' + AppSettings.sanitizeLine(AppSettings.netTcpForwards) + '\n';
+    conf += 'udp_port_forwards = ' + AppSettings.sanitizeLine(AppSettings.netUdpForwards) + '\n';
+    conf += 'slirp_netmask = ' + net.netmask + '\n';
+    conf += 'slirp_host = ' + net.gateway + '\n';
+    conf += 'slirp_dns = ' + net.dns + '\n';
+    conf += 'slirp_dhcp_start = ' + net.ip + '\n';
+    conf += '\n';
+    conf += '[ipx]\n';
+    conf += 'ipx = ' + (AppSettings.netIpx ? 'on' : 'off') + '\n';
     conf += '\n';
     conf += '[autoexec]\n';
     if (this.mountedFolder !== '') {

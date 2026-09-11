@@ -48,6 +48,10 @@ export struct LicenseSheet {
     new LicenseEntry('iir1', '混音器 IIR 滤波', 'BSL-1.0', 'https://github.com/berndporr/iir1'),
     new LicenseEntry('asio', '网络库（IPX/Modem，仅头文件）', 'BSL-1.0', 'https://github.com/chriskohlhoff/asio'),
     new LicenseEntry('libpng', 'PNG 图像库（预编译静态库）', 'libpng-2.0', 'https://github.com/pnggroup/libpng'),
+    new LicenseEntry('libslirp', '用户态 NAT 网络后端（NE2000 网卡，静态链接）', 'BSD-3-Clause',
+      'https://gitlab.freedesktop.org/slirp/libslirp'),
+    new LicenseEntry('glib 兼容层', '为 libslirp 自写的 glib 最小实现（非第三方组件）', 'GPL-2.0-or-later',
+      'https://github.com/DunoDoge/NextDOS'),
     new LicenseEntry('引擎内置第三方库', 'loguru、enet、ESFMu、Nuked OPL、residfp、mverb、YM7128B、' +
       'simpleini、stb、glad、imgui 等', '随引擎分发', 'https://github.com/DunoDoge/dosbox-staging')
   ];

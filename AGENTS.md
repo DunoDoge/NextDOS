@@ -24,6 +24,7 @@ entry/src/main/
                              #   render backend, audio, input, resources
     third_party/             # vendored: dosbox-staging (fork, branch `ohos`), SDL3
                              #   (static, dummy drivers), asio, iir1, speexdsp-shim,
+                             #   libslirp (static NAT backend + glib shim),
                              #   prebuilt libpng — read third_party/NOTICE.md before touching
 ```
 
@@ -150,8 +151,13 @@ the license for users. Keep both, plus the in-app `LicenseSheet`, in sync with
   + store in one call. Existing settings: CPU speed (`[cpu] cpu_cycles` /
   `cpu_cycles_protected` — the legacy `cycles` prop is deprecated in the
   staged fork), mute (`[mixer] nosound`, boot-time only), auto-mount of the
-  last C: folder at boot, plus the About group (version, repository link,
-  privacy policy link, and the license sub-page). Engine config is boot-time:
+  last C: folder at boot, network (NE2000 on slirp user-mode NAT via
+  `[ethernet] ne2000`, TCP/UDP port forwards, the virtual-NAT parameters
+  `slirp_netmask`/`slirp_host`/`slirp_dns`/`slirp_dhcp_start`, and IPX via
+  `[ipx] ipx` — all boot-time; libslirp is linked statically, see
+  `cpp/CMakeLists.txt` and `third_party/NOTICE.md`), plus the About group
+  (version, repository link, privacy policy link, and the license sub-page).
+  Engine config is boot-time:
   changing CPU/mute only regenerates the config (`DosEmulator.rewriteConfig`);
   the sheet's 重启模拟器 row (`host_restart`) applies it. Do not re-introduce
   a runtime `config -set` injection path — this fork ships no CONFIG guest

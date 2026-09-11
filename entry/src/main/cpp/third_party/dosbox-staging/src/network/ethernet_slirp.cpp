@@ -21,11 +21,11 @@
  * Platform specific libslirp shared library name
  */
 #if defined(WIN32)
-constexpr const char* libslirp_dynlib_file = "slirp-0.dll";
+[[maybe_unused]] constexpr const char* libslirp_dynlib_file = "slirp-0.dll";
 #elif defined(MACOSX)
-constexpr const char* libslirp_dynlib_file = "libslirp.dylib";
+[[maybe_unused]] constexpr const char* libslirp_dynlib_file = "libslirp.dylib";
 #else
-constexpr const char* libslirp_dynlib_file = "libslirp.so.0";
+[[maybe_unused]] constexpr const char* libslirp_dynlib_file = "libslirp.so.0";
 #endif
 
 namespace LibSlirp
@@ -55,6 +55,26 @@ LIBSLIRP_FUNC_LIST(LIBSLIRP_FUNC_DECLARE)
 
 } // namespace LibSlirp
 
+#if defined(DOSBOX_STATIC_SLIRP)
+/**
+ * Static linking (NextDOS / OHOS): libslirp is compiled straight into
+ * libentry.so, so bind the function pointer table to the linked symbols at
+ * static-init time instead of dlopen()ing a shared library. The macro is
+ * defined by NextDOS' cpp/CMakeLists.txt; the dlopen path below is left
+ * untouched for every other platform.
+ */
+#define LIBSLIRP_FUNC_BIND(ret_type, name, sig) \
+	LibSlirp::name = &::name;
+
+namespace
+{
+[[maybe_unused]] const bool libslirp_static_bound = [] {
+	LIBSLIRP_FUNC_LIST(LIBSLIRP_FUNC_BIND)
+	return true;
+}();
+} // namespace
+#endif
+
 /**
  * A filthy macro to resolve libslirp symbols, and return from the 
  * calling function below on error.
@@ -72,6 +92,15 @@ LIBSLIRP_FUNC_LIST(LIBSLIRP_FUNC_DECLARE)
  * 
  * If the library is already loaded, does nothing.
  */
+#if defined(DOSBOX_STATIC_SLIRP)
+/* Static build: the symbol table is already bound at static-init time (see
+ * libslirp_static_bound above), so there is nothing to load at runtime. */
+static DynLibResult load_libslirp_dynlib(std::string& err_str)
+{
+	(void)err_str;
+	return DynLibResult::Success;
+}
+#else
 static DynLibResult load_libslirp_dynlib(std::string& err_str)
 {
 	if (!LibSlirp::libslirp_lib) {
@@ -84,6 +113,7 @@ static DynLibResult load_libslirp_dynlib(std::string& err_str)
 	}
 	return DynLibResult::Success;
 }
+#endif
 
 /* Begin boilerplate to map libslirp's C-based callbacks to our C++
  * object. The user data is provided inside the 'opaque' pointer.
@@ -174,6 +204,72 @@ static void db_slirp_notify([[maybe_unused]] void *opaque)
 
 /* End boilerplate */
 
+/* NextDOS local patch: the virtual NAT network parameters used to be
+ * hard-coded to slirp's defaults. They now come from the [ethernet] section
+ * (slirp_netmask / slirp_host / slirp_dns / slirp_dhcp_start) so the app can
+ * expose them in its network settings; the network address is derived as
+ * host & netmask. A set that fails to parse, or whose DHCP pool lies outside
+ * the derived network, falls back to the defaults as a whole - slirp must
+ * never be started on a half-configured network.
+ */
+namespace
+{
+struct SlirpNetworkSettings {
+	in_addr network = {};
+	in_addr netmask = {};
+	in_addr host = {};
+	in_addr nameserver = {};
+	in_addr dhcp_start = {};
+};
+
+bool slirp_parse_ipv4(const std::string& text, in_addr& out)
+{
+	return inet_pton(AF_INET, text.c_str(), &out) == 1;
+}
+
+SlirpNetworkSettings read_slirp_network_settings(Section* dosbox_config)
+{
+	SlirpNetworkSettings net = {};
+
+	auto use_defaults = [&net]() {
+		inet_pton(AF_INET, "255.255.255.0", &net.netmask);
+		inet_pton(AF_INET, "10.0.2.2", &net.host);
+		inet_pton(AF_INET, "10.0.2.3", &net.nameserver);
+		inet_pton(AF_INET, "10.0.2.15", &net.dhcp_start);
+		net.network.s_addr = net.host.s_addr & net.netmask.s_addr;
+	};
+
+	const auto section = static_cast<SectionProp*>(dosbox_config);
+	if (!section) {
+		use_defaults();
+		return net;
+	}
+
+	const std::string netmask_text = section->GetString("slirp_netmask");
+	const std::string host_text    = section->GetString("slirp_host");
+	const std::string dns_text     = section->GetString("slirp_dns");
+	const std::string dhcp_text    = section->GetString("slirp_dhcp_start");
+
+	const bool parsed = slirp_parse_ipv4(netmask_text, net.netmask) &&
+	                    slirp_parse_ipv4(host_text, net.host) &&
+	                    slirp_parse_ipv4(dns_text, net.nameserver) &&
+	                    slirp_parse_ipv4(dhcp_text, net.dhcp_start);
+	if (!parsed) {
+		LOG_WARNING("SLIRP: invalid virtual network settings, using defaults");
+		use_defaults();
+		return net;
+	}
+
+	net.network.s_addr = net.host.s_addr & net.netmask.s_addr;
+	if ((net.dhcp_start.s_addr & net.netmask.s_addr) != net.network.s_addr) {
+		LOG_WARNING("SLIRP: DHCP start %s is outside the virtual network, using defaults",
+		            dhcp_text.c_str());
+		use_defaults();
+	}
+	return net;
+}
+} // namespace
+
 SlirpEthernetConnection::SlirpEthernetConnection()
         : EthernetConnection()
 {
@@ -228,14 +324,17 @@ bool SlirpEthernetConnection::Initialize(Section *dosbox_config)
 	config.enable_emu = false; // buggy - keep this at false
 	config.in_enabled = true;
 
-	// The IPv4 network the guest and host services are on
-	inet_pton(AF_INET, "10.0.2.0", &config.vnetwork);
-
-	// The netmask for the IPv4 network.
-	inet_pton(AF_INET, "255.255.255.0", &config.vnetmask);
-	inet_pton(AF_INET, "10.0.2.2", &config.vhost);
-	inet_pton(AF_INET, "10.0.2.3", &config.vnameserver);
-	inet_pton(AF_INET, "10.0.2.15", &config.vdhcp_start);
+	// The IPv4 network the guest and host services are on, plus its netmask,
+	// gateway (DHCP service), DNS server and first DHCP address. The network
+	// address is derived as host & netmask; see
+	// read_slirp_network_settings() for the [ethernet] overrides and the
+	// defaults fallback.
+	const SlirpNetworkSettings net = read_slirp_network_settings(dosbox_config);
+	config.vnetwork    = net.network;
+	config.vnetmask    = net.netmask;
+	config.vhost       = net.host;
+	config.vnameserver = net.nameserver;
+	config.vdhcp_start = net.dhcp_start;
 
 	/* IPv6 code is left here as reference but disabled as no DOS-era
 	 * software supports it and might get confused by it */

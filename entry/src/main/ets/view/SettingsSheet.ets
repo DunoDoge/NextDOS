@@ -47,6 +47,15 @@ export struct SettingsSheet {
   @StorageLink('settings.mute') mute: boolean = false;
   @StorageLink('settings.autoMount') autoMount: boolean = false;
   @StorageLink('settings.lastMountDir') lastMountDir: string = '';
+  // Network group (keys must match AppSettings.seedAppStorage() verbatim).
+  @StorageLink('settings.netNe2000') netNe2000: boolean = false;
+  @StorageLink('settings.netTcpForwards') netTcpForwards: string = '';
+  @StorageLink('settings.netUdpForwards') netUdpForwards: string = '';
+  @StorageLink('settings.netIpx') netIpx: boolean = false;
+  @StorageLink('settings.netIp') netIp: string = '10.0.2.15';
+  @StorageLink('settings.netNetmask') netNetmask: string = '255.255.255.0';
+  @StorageLink('settings.netGateway') netGateway: string = '10.0.2.2';
+  @StorageLink('settings.netDns') netDns: string = '10.0.2.3';
 
   aboutToAppear(): void {
     bundleManager.getBundleInfoForSelf(bundleManager.BundleFlag.GET_BUNDLE_INFO_DEFAULT)
@@ -96,6 +105,57 @@ export struct SettingsSheet {
   private handleMute(value: boolean): void {
     AppSettings.setMute(value);
     this.applyBootSettings();
+  }
+
+  /** Toggles are the deliberate "take effect on restart" actions, so they
+   * toast right away like CPU/mute. Text fields instead persist + regenerate
+   * the config on every keystroke and only toast once editing ends (a toast
+   * per character would be unusable). */
+  private handleNetNe2000(value: boolean): void {
+    AppSettings.setNetNe2000(value);
+    this.applyBootSettings();
+  }
+
+  private handleNetIpx(value: boolean): void {
+    AppSettings.setNetIpx(value);
+    this.applyBootSettings();
+  }
+
+  private handleNetTcp(value: string): void {
+    AppSettings.setNetTcpForwards(value);
+    this.emu.rewriteConfig();
+  }
+
+  private handleNetUdp(value: string): void {
+    AppSettings.setNetUdpForwards(value);
+    this.emu.rewriteConfig();
+  }
+
+  private handleNetIp(value: string): void {
+    AppSettings.setNetIp(value);
+    this.emu.rewriteConfig();
+  }
+
+  private handleNetNetmask(value: string): void {
+    AppSettings.setNetNetmask(value);
+    this.emu.rewriteConfig();
+  }
+
+  private handleNetGateway(value: string): void {
+    AppSettings.setNetGateway(value);
+    this.emu.rewriteConfig();
+  }
+
+  private handleNetDns(value: string): void {
+    AppSettings.setNetDns(value);
+    this.emu.rewriteConfig();
+  }
+
+  /** Shared "editing finished" hint for the network text fields. */
+  private notifyRestartNeeded(): void {
+    if (this.emu.isRunning()) {
+      this.toast('已保存，重启模拟器后生效');
+    }
   }
 
   private restartEmulator(): void {
@@ -225,7 +285,7 @@ export struct SettingsSheet {
           Text('重启模拟器')
             .fontSize(16)
             .fontColor('#FFFFFF')
-          Text('应用 CPU、声音等启动设置')
+          Text('应用 CPU、声音、网络等启动设置')
             .fontSize(12)
             .fontColor('#8A8A92')
             .margin({ top: 2 })
@@ -244,6 +304,262 @@ export struct SettingsSheet {
       .onClick(() => {
         this.restartEmulator();
       })
+    }
+    .width('100%')
+    .borderRadius(12)
+    .backgroundColor('#24242C')
+  }
+
+  /**
+   * Network group: NE2000 card (slirp user-mode NAT), TCP/UDP port forwards
+   * and IPX multiplayer. Everything here is written into [ethernet]/[ipx]
+   * and therefore boot-time, exactly like CPU and mute. The card is borderless
+   * on/off: "on" is the engine's NAT (slirp) connection - DOSBox Staging has no
+   * bridged backend to offer, so there is no 桥接 option to select.
+   */
+  @Builder
+  networkGroup() {
+    Text('网络')
+      .fontSize(13)
+      .fontColor('#8A8A92')
+      .width('100%')
+      .margin({ top: 20, bottom: 8 })
+
+    Column() {
+      Row() {
+        Column() {
+          Text('网卡（NE2000）')
+            .fontSize(16)
+            .fontColor('#FFFFFF')
+          Text('开 = 用户态 NAT 联网（默认 10.0.2.0/24，网关 10.0.2.2，DNS 10.0.2.3，' +
+            'DHCP 首址 10.0.2.15）；关 = 断开。引擎不支持桥接模式。' +
+            'DOS 内需自备 NE2000 packet driver 与 TCP/IP 栈（如 mTCP）。')
+            .fontSize(12)
+            .fontColor('#8A8A92')
+            .margin({ top: 2 })
+        }
+        .alignItems(HorizontalAlign.Start)
+        .layoutWeight(1)
+
+        Toggle({ type: ToggleType.Switch, isOn: this.netNe2000 })
+          .onChange((isOn: boolean) => {
+            this.handleNetNe2000(isOn);
+          })
+      }
+      .width('100%')
+      .padding({ left: 16, right: 16, top: 10, bottom: 10 })
+
+      Divider()
+        .strokeWidth(0.5)
+        .color('#FFFFFF14')
+        .margin({ left: 16 })
+
+      Column() {
+        Text('TCP 端口转发')
+          .fontSize(16)
+          .fontColor('#FFFFFF')
+        TextInput({ text: this.netTcpForwards, placeholder: '如 8021:21 8080:80' })
+          .fontSize(14)
+          .fontColor('#FFFFFF')
+          .placeholderColor('#6A6A72')
+          .backgroundColor('#33333B')
+          .borderRadius(8)
+          .height(38)
+          .margin({ top: 8 })
+          .onChange((value: string) => {
+            this.handleNetTcp(value);
+          })
+          .onBlur(() => {
+            this.notifyRestartNeeded();
+          })
+      }
+      .width('100%')
+      .padding({ left: 16, right: 16, top: 10, bottom: 10 })
+
+      Divider()
+        .strokeWidth(0.5)
+        .color('#FFFFFF14')
+        .margin({ left: 16 })
+
+      Column() {
+        Text('UDP 端口转发')
+          .fontSize(16)
+          .fontColor('#FFFFFF')
+        TextInput({ text: this.netUdpForwards, placeholder: '如 8021:21 8080:80' })
+          .fontSize(14)
+          .fontColor('#FFFFFF')
+          .placeholderColor('#6A6A72')
+          .backgroundColor('#33333B')
+          .borderRadius(8)
+          .height(38)
+          .margin({ top: 8 })
+          .onChange((value: string) => {
+            this.handleNetUdp(value);
+          })
+          .onBlur(() => {
+            this.notifyRestartNeeded();
+          })
+      }
+      .width('100%')
+      .padding({ left: 16, right: 16, top: 10, bottom: 10 })
+
+      Divider()
+        .strokeWidth(0.5)
+        .color('#FFFFFF14')
+        .margin({ left: 16 })
+
+      Row() {
+        Column() {
+          Text('IPX 联机')
+            .fontSize(16)
+            .fontColor('#FFFFFF')
+          Text('guest 内用 IPXNET 命令联机（STARTSERVER / CONNECT）；应用内无法绑定 213 等特权端口，STARTSERVER 需指定 1024 以上的端口（如 21300）')
+            .fontSize(12)
+            .fontColor('#8A8A92')
+            .margin({ top: 2 })
+        }
+        .alignItems(HorizontalAlign.Start)
+        .layoutWeight(1)
+
+        Toggle({ type: ToggleType.Switch, isOn: this.netIpx })
+          .onChange((isOn: boolean) => {
+            this.handleNetIpx(isOn);
+          })
+      }
+      .width('100%')
+      .padding({ left: 16, right: 16, top: 10, bottom: 10 })
+    }
+    .width('100%')
+    .borderRadius(12)
+    .backgroundColor('#24242C')
+  }
+
+  /**
+   * Virtual-NAT parameters of the emulated card (the slirp backend's own
+   * network). Exposed separately from the 网络 group: they are advanced knobs
+   * that only matter when the defaults collide with the host's network.
+   */
+  @Builder
+  netParamsGroup() {
+    Text('网卡参数（虚拟 NAT）')
+      .fontSize(13)
+      .fontColor('#8A8A92')
+      .width('100%')
+      .margin({ top: 20, bottom: 8 })
+
+    Text('任一地址格式非法，或 DHCP 地址不在「网关 & 掩码」网段内时，整组回退默认值。')
+      .fontSize(12)
+      .fontColor('#6A6A72')
+      .width('100%')
+      .margin({ bottom: 8 })
+
+    Column() {
+      Row() {
+        Text('IP 地址')
+          .fontSize(15)
+          .fontColor('#FFFFFF')
+          .width(76)
+        TextInput({ text: this.netIp, placeholder: '10.0.2.15' })
+          .fontSize(14)
+          .fontColor('#FFFFFF')
+          .placeholderColor('#6A6A72')
+          .backgroundColor('#33333B')
+          .borderRadius(8)
+          .height(38)
+          .layoutWeight(1)
+          .onChange((value: string) => {
+            this.handleNetIp(value);
+          })
+          .onBlur(() => {
+            this.notifyRestartNeeded();
+          })
+      }
+      .width('100%')
+      .padding({ left: 16, right: 16, top: 10, bottom: 10 })
+
+      Divider()
+        .strokeWidth(0.5)
+        .color('#FFFFFF14')
+        .margin({ left: 16 })
+
+      Row() {
+        Text('子网掩码')
+          .fontSize(15)
+          .fontColor('#FFFFFF')
+          .width(76)
+        TextInput({ text: this.netNetmask, placeholder: '255.255.255.0' })
+          .fontSize(14)
+          .fontColor('#FFFFFF')
+          .placeholderColor('#6A6A72')
+          .backgroundColor('#33333B')
+          .borderRadius(8)
+          .height(38)
+          .layoutWeight(1)
+          .onChange((value: string) => {
+            this.handleNetNetmask(value);
+          })
+          .onBlur(() => {
+            this.notifyRestartNeeded();
+          })
+      }
+      .width('100%')
+      .padding({ left: 16, right: 16, top: 10, bottom: 10 })
+
+      Divider()
+        .strokeWidth(0.5)
+        .color('#FFFFFF14')
+        .margin({ left: 16 })
+
+      Row() {
+        Text('网关')
+          .fontSize(15)
+          .fontColor('#FFFFFF')
+          .width(76)
+        TextInput({ text: this.netGateway, placeholder: '10.0.2.2' })
+          .fontSize(14)
+          .fontColor('#FFFFFF')
+          .placeholderColor('#6A6A72')
+          .backgroundColor('#33333B')
+          .borderRadius(8)
+          .height(38)
+          .layoutWeight(1)
+          .onChange((value: string) => {
+            this.handleNetGateway(value);
+          })
+          .onBlur(() => {
+            this.notifyRestartNeeded();
+          })
+      }
+      .width('100%')
+      .padding({ left: 16, right: 16, top: 10, bottom: 10 })
+
+      Divider()
+        .strokeWidth(0.5)
+        .color('#FFFFFF14')
+        .margin({ left: 16 })
+
+      Row() {
+        Text('DNS')
+          .fontSize(15)
+          .fontColor('#FFFFFF')
+          .width(76)
+        TextInput({ text: this.netDns, placeholder: '10.0.2.3' })
+          .fontSize(14)
+          .fontColor('#FFFFFF')
+          .placeholderColor('#6A6A72')
+          .backgroundColor('#33333B')
+          .borderRadius(8)
+          .height(38)
+          .layoutWeight(1)
+          .onChange((value: string) => {
+            this.handleNetDns(value);
+          })
+          .onBlur(() => {
+            this.notifyRestartNeeded();
+          })
+      }
+      .width('100%')
+      .padding({ left: 16, right: 16, top: 10, bottom: 10 })
     }
     .width('100%')
     .borderRadius(12)
@@ -383,6 +699,8 @@ export struct SettingsSheet {
       .width('100%')
 
       this.emulatorGroup()
+      this.networkGroup()
+      this.netParamsGroup()
       this.aboutGroup()
     }
     .width('100%')

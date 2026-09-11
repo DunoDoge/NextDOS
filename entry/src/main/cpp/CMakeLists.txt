@@ -72,6 +72,71 @@ set(OPT_DOCUMENTATION OFF CACHE BOOL "" FORCE)
 add_subdirectory(${TP_DIR}/dosbox-staging dosbox-staging)
 
 # ---------------------------------------------------------------------------
+# libslirp (user-mode NAT backend for the emulated NE2000 card)
+#
+# The engine's slirp backend normally dlopen()s libslirp.so.0 at runtime;
+# OHOS ships no such library, which would make the network card silently
+# unavailable. Vendor the libslirp 4.8.0 source subset plus a hand-written
+# glib shim (third_party/libslirp/) and link them straight into libentry.so,
+# then switch the fork to its DOSBOX_STATIC_SLIRP branch. The fork's own
+# CMake is left untouched; see third_party/NOTICE.md for the patch record.
+# ---------------------------------------------------------------------------
+set(LIBSLIRP_DIR "${TP_DIR}/libslirp")
+
+add_library(slirp STATIC
+    ${LIBSLIRP_DIR}/src/arp_table.c
+    ${LIBSLIRP_DIR}/src/bootp.c
+    ${LIBSLIRP_DIR}/src/cksum.c
+    ${LIBSLIRP_DIR}/src/dhcpv6.c
+    ${LIBSLIRP_DIR}/src/dnssearch.c
+    ${LIBSLIRP_DIR}/src/if.c
+    ${LIBSLIRP_DIR}/src/ip6_icmp.c
+    ${LIBSLIRP_DIR}/src/ip6_input.c
+    ${LIBSLIRP_DIR}/src/ip6_output.c
+    ${LIBSLIRP_DIR}/src/ip_icmp.c
+    ${LIBSLIRP_DIR}/src/ip_input.c
+    ${LIBSLIRP_DIR}/src/ip_output.c
+    ${LIBSLIRP_DIR}/src/mbuf.c
+    ${LIBSLIRP_DIR}/src/misc.c
+    ${LIBSLIRP_DIR}/src/ncsi.c
+    ${LIBSLIRP_DIR}/src/ndp_table.c
+    ${LIBSLIRP_DIR}/src/sbuf.c
+    ${LIBSLIRP_DIR}/src/slirp.c
+    ${LIBSLIRP_DIR}/src/socket.c
+    ${LIBSLIRP_DIR}/src/state.c
+    ${LIBSLIRP_DIR}/src/stream.c
+    ${LIBSLIRP_DIR}/src/tcp_input.c
+    ${LIBSLIRP_DIR}/src/tcp_output.c
+    ${LIBSLIRP_DIR}/src/tcp_subr.c
+    ${LIBSLIRP_DIR}/src/tcp_timer.c
+    ${LIBSLIRP_DIR}/src/tftp.c
+    ${LIBSLIRP_DIR}/src/udp.c
+    ${LIBSLIRP_DIR}/src/udp6.c
+    ${LIBSLIRP_DIR}/src/util.c
+    ${LIBSLIRP_DIR}/src/version.c
+    ${LIBSLIRP_DIR}/src/vmstate.c
+    # glib-2.0 compatibility layer (replaces the glib dependency)
+    ${LIBSLIRP_DIR}/glib_shim.c
+)
+
+target_include_directories(slirp PUBLIC
+    ${LIBSLIRP_DIR}
+    ${LIBSLIRP_DIR}/src
+)
+
+# libslirp is C99 (meson builds it as gnu99); C11 is a superset and gives
+# _Static_assert for the G_STATIC_ASSERT shim.
+set_target_properties(slirp PROPERTIES
+    C_STANDARD 11
+    C_STANDARD_REQUIRED ON
+    C_EXTENSIONS ON
+)
+
+# Bind the fork's slirp function table to the linked-in symbols.
+target_compile_definitions(dosboxcommon PRIVATE DOSBOX_STATIC_SLIRP)
+target_link_libraries(dosboxcommon PUBLIC slirp)
+
+# ---------------------------------------------------------------------------
 # NextDOS OHOS platform layer + NAPI bridge
 # ---------------------------------------------------------------------------
 add_library(entry SHARED
