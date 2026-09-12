@@ -11,6 +11,7 @@
 #include "SDL3/SDL.h"
 
 #include <cstddef>
+#include <mutex>
 #include <optional>
 
 #include "ohos_embed.h"
@@ -123,7 +124,9 @@ void push_key_event(SDL_Scancode scancode, bool key_down, Uint16 mods)
 
 // Coordinate transform: frame pixel space -> host canvas space (the space
 // MOUSE_NewScreenParams() received its draw_rect in). Updated by the gui
-// layer whenever the viewport changes.
+// layer whenever the viewport changes. Guarded by a mutex: the engine
+// thread rewrites it on mode changes while the UI thread reads it for
+// every injected pointer event.
 struct MouseTransform {
 	float offset_x = 0.0f;
 	float offset_y = 0.0f;
@@ -133,6 +136,14 @@ struct MouseTransform {
 };
 
 MouseTransform g_mouse_transform = {};
+
+std::mutex g_mouse_mutex;
+
+// Last position handed to the engine, in host canvas space. The gui layer
+// feeds it back as the screen params' absolute position so video-mode
+// switches do not teleport the cursor to the top-left corner.
+float g_last_mouse_x = 0.0f;
+float g_last_mouse_y = 0.0f;
 
 } // namespace
 
@@ -155,7 +166,14 @@ void input_inject_key(int key_code, bool key_down, bool shift, bool ctrl,
 void input_inject_mouse(int action, int button, float x, float y,
                         float rel_x, float rel_y)
 {
-	const MouseTransform& t = g_mouse_transform;
+	// Snapshot under the mutex: the engine thread may swap the transform
+	// (video mode change) between two events, but one event must never mix
+	// a stale offset with a fresh scale.
+	MouseTransform t = {};
+	{
+		std::lock_guard<std::mutex> lock(g_mouse_mutex);
+		t = g_mouse_transform;
+	}
 
 	SDL_Event event = {};
 
@@ -171,12 +189,20 @@ void input_inject_mouse(int action, int button, float x, float y,
 		event.motion.xrel = rel_x;
 		event.motion.yrel = rel_y;
 		SDL_PushEvent(&event);
+		{
+			std::lock_guard<std::mutex> lock(g_mouse_mutex);
+			g_last_mouse_x = event.motion.x;
+			g_last_mouse_y = event.motion.y;
+		}
 		break;
 	}
 	case 1: { // button
 		// `button` packs the action: 1=left 2=right 3=middle pressed,
-		// +4 for the release (5/6/7).
-		const int button_id = button & 0x7;
+		// +4 for the release (5/6/7). Mask with 0x3 to recover the id
+		// on both press and release — masking with 0x7 would leak the
+		// release bit into the SDL button id (5..7 mean X1/X2 there)
+		// and e.g. a left-button release would free a stuck button.
+		const int button_id = button & 0x3;
 		const bool is_down  = button < 4;
 		event.type          = is_down ? SDL_EVENT_MOUSE_BUTTON_DOWN
 		                              : SDL_EVENT_MOUSE_BUTTON_UP;
@@ -190,6 +216,11 @@ void input_inject_mouse(int action, int button, float x, float y,
 		event.button.x      = t.valid ? t.offset_x + x * t.scale_x : x;
 		event.button.y      = t.valid ? t.offset_y + y * t.scale_y : y;
 		SDL_PushEvent(&event);
+		{
+			std::lock_guard<std::mutex> lock(g_mouse_mutex);
+			g_last_mouse_x = event.button.x;
+			g_last_mouse_y = event.button.y;
+		}
 		break;
 	}
 	case 2: { // wheel
@@ -211,6 +242,7 @@ void input_inject_mouse(int action, int button, float x, float y,
 void ohos_get_mouse_transform(float& offset_x, float& offset_y,
                               float& scale_x, float& scale_y)
 {
+	std::lock_guard<std::mutex> lock(g_mouse_mutex);
 	const MouseTransform& t = g_mouse_transform;
 	offset_x = t.offset_x;
 	offset_y = t.offset_y;
@@ -218,9 +250,17 @@ void ohos_get_mouse_transform(float& offset_x, float& offset_y,
 	scale_y  = t.scale_y;
 }
 
+void ohos_get_last_injected_mouse_pos(float& x, float& y)
+{
+	std::lock_guard<std::mutex> lock(g_mouse_mutex);
+	x = g_last_mouse_x;
+	y = g_last_mouse_y;
+}
+
 void ohos_set_mouse_transform(float offset_x, float offset_y, float scale_x,
                               float scale_y)
 {
+	std::lock_guard<std::mutex> lock(g_mouse_mutex);
 	g_mouse_transform.offset_x = offset_x;
 	g_mouse_transform.offset_y = offset_y;
 	g_mouse_transform.scale_x  = scale_x;

@@ -95,6 +95,17 @@ export class DosEmulator {
     // throughput collapses; 100 is also the engine's MaxPrebufferMs clamp.
     conf += 'prebuffer = 100\n';
     conf += '\n';
+    // Seamless pointer: the engine's upstream docs recommend this mode for
+    // touch screens — the INT 33h DOS driver positions the guest cursor from
+    // absolute touch/mouse coordinates while PS/2 consumers keep the injected
+    // relative deltas. middle_release stays off: with it on, the first
+    // physical middle-press is swallowed to toggle capture, which silently
+    // flips the DOS driver from absolute back to relative mode (no touch
+    // device has a middle button to flip it back). Boot-time only.
+    conf += '[mouse]\n';
+    conf += 'mouse_capture = seamless\n';
+    conf += 'mouse_middle_release = false\n';
+    conf += '\n';
     conf += '[ethernet]\n';
     conf += 'ne2000 = ' + (AppSettings.netNe2000 ? 'on' : 'off') + '\n';
     conf += 'tcp_port_forwards = ' + AppSettings.sanitizeLine(AppSettings.netTcpForwards) + '\n';

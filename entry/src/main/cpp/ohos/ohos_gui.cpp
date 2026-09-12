@@ -32,6 +32,11 @@
 void ohos_set_mouse_transform(float offset_x, float offset_y, float scale_x,
                               float scale_y);
 
+// Implemented in ohos_input.cpp; the last position pushed to the engine, so
+// mode/viewport changes keep the cursor where the user last touched instead
+// of teleporting it to the draw-rect origin.
+void ohos_get_last_injected_mouse_pos(float& x, float& y);
+
 namespace {
 
 struct {
@@ -74,8 +79,7 @@ void notify_new_mouse_screen_params()
 
 	MouseScreenParams params = {};
 	params.draw_rect         = sdl.draw.draw_rect_px;
-	params.x_abs             = 0.0f;
-	params.y_abs             = 0.0f;
+	ohos_get_last_injected_mouse_pos(params.x_abs, params.y_abs);
 	params.is_fullscreen     = false;
 	params.is_multi_display  = false;
 
@@ -283,6 +287,10 @@ void GFX_InitAndStartGui()
 
 	// Assume focus on startup
 	MAPPER_LosingFocus();
+	// The app window is the only window: it is active whenever it is
+	// visible. Without this the mouse subsystem keeps is_window_active
+	// false and should_drop_events() discards every injected event.
+	MOUSE_NotifyWindowActive(true);
 
 	RENDER_SetShaderWithFallback();
 
@@ -341,7 +349,13 @@ void GFX_SetMouseRawInput([[maybe_unused]] const bool requested_raw_input) {}
 
 bool GFX_HaveDesktopEnvironment()
 {
-	return false;
+	// Claiming a desktop environment switches the mouse subsystem out of
+	// its headless always-captured defaults: with [mouse] capture=seamless
+	// (see DosEmulator.writeConfig) the engine runs the seamless pointer
+	// path the upstream docs recommend for touch screens — the DOS INT 33h
+	// driver positions the guest cursor from absolute coordinates while
+	// PS/2 consumers still receive the injected relative deltas.
+	return true;
 }
 
 DosBox::Rect GFX_GetCanvasSizeInPixels()
