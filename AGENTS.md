@@ -92,7 +92,15 @@ the license for users. Keep both, plus the in-app `LicenseSheet`, in sync with
 - When changing NAPI exports, update all three: `napi_init.cpp`,
   `cpp/types/libentry/Index.d.ts`, and the `DosEmulator` wrapper.
 - Comments state constraints (why), matching the existing English comment
-  style; commit messages are in Chinese (`feat:`/`fix:` prefixes).
+  style.
+- Commit messages follow Conventional Commits in Chinese, enforced by
+  commitlint (`commitlint.config.js` + the `.husky/commit-msg` hook; a fresh
+  clone needs `npm install` once and `git config core.hooksPath .husky` — the
+  toolchain does not participate in the HarmonyOS build): `type(scope): 中文描述`
+  with a mandatory scope from `view`/`model`/`engine`/`build`/`docs`/`resources`
+  (register new scopes in the config's `scope-enum` first), a Chinese subject,
+  no dashes (`——`/`—`/`--`) anywhere: put details in the body as `- ` bullet
+  lines; header ≤ 100 chars.
 
 ## Gotchas
 
