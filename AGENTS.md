@@ -13,6 +13,7 @@ entry/src/main/
                              #   IME text input (imeLayer: invisible TextArea + tap-to-focus)
     view/                    # UI components: EmulatorScreen, ControlKeyBar (touch),
                              #   SettingsSheet (模拟器: cpu/mute/auto-mount/restart,
+                             #   网络: nic/port-forwards/nat/ipx,
                              #   About: version/repo/privacy/license),
                              #   LicenseSheet (license sub-page over the sheet)
     model/                   # non-UI: DosEmulator (NAPI controller), DosKeyMap, MountFolder
@@ -41,6 +42,22 @@ keyboard pops up (`KeyboardAvoidMode.RESIZE` keeps the canvas visible);
 `Index.handleImeChange` diffs the field content and forwards it through
 `DosEmulator.typeIntoGuest`. There is deliberately no in-app SoftKeyboard
 component and no keyboard-toggle button.
+
+Pointer input drives the guest's own mouse driver instead of a synthetic
+touchpad: the generated engine config sets `[mouse] mouse_capture = seamless`
+(`DosEmulator.ets`), so the INT 33h cursor follows the absolute position
+handed over by `injectMouse`. `EmulatorScreen` maps touches and physical
+mouse events into that space — tap = left click, slide past the slop
+radius (`TOUCH_SLOSH_VP`) = drag,
+long-press (480 ms, `LONG_PRESS_MS`) = right click; a physical mouse is
+mapped move/click/drag event by event. The `injectMouse` `button` argument
+follows the injection contract (low bits 1/2/3 = left/right/middle, the +4
+bit marks release) and `input_inject_mouse` (`ohos_input.cpp`) translates it
+into SDL button numbers — do not pass raw numbers through, SDL would read
+2/3 as middle/right and the right press gets stripped by the driver's button
+mask. Mouse events are silently dropped unless the guest is told the window
+is active: `MOUSE_NotifyWindowActive` is called from `ohos_gui.cpp` on boot;
+a boot path that skips it loses all pointer input.
 
 Licensing: dosbox-staging is GPL-2.0-or-later — the combined app inherits it;
 the repo-root `LICENSE` carries the full GPL-2.0 text and `README.md` states
@@ -80,11 +97,21 @@ the license for users. Keep both, plus the in-app `LicenseSheet`, in sync with
 ## Gotchas
 
 - **Engine embed statics are one-shot.** DOSBox Staging in embed mode has
-  static latches (shutdown, mixer, autoexec, i8042, mouse TSR, VGA mode);
-  stop/reset in the same process is fragile. Mounting a folder therefore
-  never restarts the engine — `DosEmulator.mountFolder` types
+  static latches (shutdown, mixer, autoexec, i8042, mouse TSR, VGA mode,
+  IPX `dospage`, INT 15h AH=C0h `biosConfigSeg`, the INT 2F multiplex
+  handler list); stop/reset in the same process is fragile. Mounting a
+  folder therefore never restarts the engine — `DosEmulator.mountFolder` types
   `mount c <dir>` + `c:` into the *running* guest via `typeIntoGuest`
   (config is regenerated only so future boots re-mount). Keep it that way.
+  The latch pattern to watch for: a page lazily allocated from the DOS
+  private segment (`DOS_GetMemory`) whose destructor never resets its
+  static address latch gets that same segment handed out again on the next
+  boot (DOS_FreeTableMemory rewinds the cursor) and tramples whatever the
+  fresh boot put there — this surfaced as Windows 3.x SETUP reporting an
+  incompatible XMS driver. The INT 2F multiplex list is symmetric now:
+  every registration is deleted on shutdown, and a delete that misses its
+  handler logs `LOG_WARNING` — if it fires, a teardown lost its matching
+  init.
 - **Dynrec under W^X.** Any guest protected-mode program (32-bit DOS
   extender, e.g. mpxplay) makes `core=auto` switch to the dynamic
   recompiler on first PM entry. HarmonyOS XPM rejects anonymous RWX
