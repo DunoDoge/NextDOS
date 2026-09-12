@@ -200,17 +200,24 @@ void input_inject_mouse(int action, int button, float x, float y,
 		// `button` packs the action: 1=left 2=right 3=middle pressed,
 		// +4 for the release (5/6/7). Mask with 0x3 to recover the id
 		// on both press and release — masking with 0x7 would leak the
-		// release bit into the SDL button id (5..7 mean X1/X2 there)
-		// and e.g. a left-button release would free a stuck button.
+		// release bit into the SDL button id and e.g. a left-button
+		// release would free a stuck button. SDL numbers buttons
+		// 1=left 2=middle 3=right, so the right/middle contract here
+		// must be translated, not passed through.
 		const int button_id = button & 0x3;
 		const bool is_down  = button < 4;
+		Uint8 sdl_button    = SDL_BUTTON_LEFT;
+		if (button_id == 2) {
+			sdl_button = SDL_BUTTON_RIGHT;
+		} else if (button_id == 3) {
+			sdl_button = SDL_BUTTON_MIDDLE;
+		}
 		event.type          = is_down ? SDL_EVENT_MOUSE_BUTTON_DOWN
 		                              : SDL_EVENT_MOUSE_BUTTON_UP;
 		event.button.timestamp = SDL_GetTicksNS();
 		event.button.windowID  = 0;
 		event.button.which     = 0;
-		event.button.button =
-		        static_cast<Uint8>(button_id == 0 ? 1 : button_id);
+		event.button.button    = sdl_button;
 		event.button.down   = is_down;
 		event.button.clicks = 1;
 		event.button.x      = t.valid ? t.offset_x + x * t.scale_x : x;
