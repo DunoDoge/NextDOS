@@ -29,6 +29,10 @@ void DOS_DeleteMultiplexHandler(MultiplexHandler* const handler)
 			return;
 		}
 	}
+	// A missed delete means teardown ran without the matching init (for
+	// example a second shutdown in the same process); flag it, the static
+	// list must stay balanced across in-process restarts.
+	LOG_WARNING("DOS: INT 2F multiplex handler delete missed (not registered)");
 }
 
 static Bitu INT2F_Handler(void)
@@ -240,4 +244,11 @@ void DOS_SetupMisc(void) {
 	call_int2a=CALLBACK_Allocate();
 	CALLBACK_Setup(call_int2a,&INT2A_Handler,CB_IRET,"DOS Int 2a");
 	RealSetVec(0x2A,CALLBACK_RealPointer(call_int2a));
+}
+
+void DOS_ShutDownMisc(void) {
+	// Remove the handler DOS_SetupMisc() registered; without this the
+	// static multiplex list keeps the stale entry across an in-process
+	// restart and every boot adds another duplicate.
+	DOS_DeleteMultiplexHandler(DOS_MultiplexFunctions);
 }

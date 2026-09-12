@@ -336,6 +336,7 @@ bool DOS_GetAllocationInfo(uint8_t drive,uint16_t * _bytes_sector,uint8_t * _sec
 
 /* Extra DOS Interrupts */
 void DOS_SetupMisc(void);
+void DOS_ShutDownMisc(void);
 
 /* The DOS Tables */
 void DOS_SetupTables(void);

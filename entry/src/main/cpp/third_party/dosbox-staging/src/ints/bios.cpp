@@ -624,8 +624,14 @@ static Bitu INT14_Handler(void) {
 	return CBRET_NONE;
 }
 
+// Allocated lazily at the first INT 15h AH=C0h call; lives at file scope so
+// the BIOS teardown can reset it. With the embed-mode in-process restart the
+// DOS private segment is handed out again from its start, so a stale segment
+// value would make this handler write its 16 config bytes into whatever the
+// fresh boot allocated there.
+static uint16_t biosConfigSeg = 0;
+
 static Bitu INT15_Handler(void) {
-	static uint16_t biosConfigSeg=0;
 	switch (reg_ah) {
 	case 0x24: // A20 stuff
 		switch (reg_al) {
@@ -1520,6 +1526,9 @@ public:
 	}
 	~BIOS(){
 		shutdown_tandy_sb_dac_callbacks();
+		// Drop the lazy INT 15h AH=C0h allocation so the next in-process
+		// boot re-allocates it from the rebuilt DOS private segment.
+		biosConfigSeg = 0;
 	}
 };
 

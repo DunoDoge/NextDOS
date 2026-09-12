@@ -1859,6 +1859,12 @@ public:
 		// exception
 		DOS_ShutDownDevices();
 
+		// Remove the multiplex handlers this boot registered; the static
+		// list would otherwise carry stale entries (and duplicates) into
+		// the next in-process boot.
+		DOS_DeleteMultiplexHandler(WINDOWS_Int2F_Handler);
+		DOS_ShutDownMisc();
+
 		DOS_UninstallInterruptStacks();
 
 		DOS_FreeTableMemory();

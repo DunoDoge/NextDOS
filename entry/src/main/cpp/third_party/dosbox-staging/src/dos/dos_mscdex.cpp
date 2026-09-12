@@ -1455,6 +1455,11 @@ void MSCDEX_Init()
 
 void MSCDEX_Destroy()
 {
+	// Remove the handler MSCDEX_Init() registered; the static multiplex
+	// list would otherwise keep the stale entry across an in-process
+	// restart and every boot adds another duplicate.
+	DOS_DeleteMultiplexHandler(MSCDEX_Handler);
+
 	std::for_each(CDROM::cdroms.begin(),
 	              CDROM::cdroms.end(),
 	              [](auto& cdrom_ptr) { cdrom_ptr.reset(); });

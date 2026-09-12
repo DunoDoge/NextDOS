@@ -1259,6 +1259,15 @@ public:
 			phys_writeb(phyDospage+i,(uint8_t)0x00);
 
 		VFILE_Remove("IPXNET.COM");
+
+		// The DOS private segment cursor is reset by the next in-process
+		// boot (DOS_FreeTableMemory), so this page's contents are gone and
+		// the address will be handed out again. Reset the latch or the next
+		// IPX init reuses the stale address and its ESR stub tramples
+		// whatever the fresh boot allocated there (observed as the XMS
+		// handler stub being overwritten, which made Windows 3.x setup
+		// report an incompatible XMS driver).
+		dospage = 0;
 	}
 };
 
