@@ -1,0 +1,13 @@
+#!/usr/bin/env sh
+# commit-msg 钩子：校验提交信息格式（Conventional Commits + 中文规范）
+# 完整规范见 AGENTS.md「Conventions」提交消息条目
+# 校验依赖 @commitlint/cli，新克隆仓库需先执行 npm install，
+# 并执行 git config core.hooksPath .husky 启用本钩子
+
+if [ ! -f node_modules/.bin/commitlint ]; then
+  echo "commit-msg 钩子：未找到 commitlint，请先运行 npm install 安装提交规范工具链"
+  echo "（规范见 AGENTS.md「Conventions」）"
+  exit 1
+fi
+
+npx --no -- commitlint --edit "$1"

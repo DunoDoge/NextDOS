@@ -1,0 +1,13 @@
+{
+  "name": "nextdos",
+  "version": "1.0.0",
+  "private": true,
+  "description": "NextDOS 提交规范工具链（commitlint 校验，不参与 HarmonyOS 构建）",
+  "scripts": {
+    "commitlint": "commitlint --from HEAD~10"
+  },
+  "devDependencies": {
+    "@commitlint/cli": "^19.8.1",
+    "@commitlint/config-conventional": "^19.8.0"
+  }
+}
