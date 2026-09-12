@@ -1,7 +1,7 @@
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { common } from '@kit.AbilityKit';
 import { BusinessError, deviceInfo } from '@kit.BasicServicesKit';
-import { display, KeyboardAvoidMode, window } from '@kit.ArkUI';
+import { display, KeyboardAvoidMode, LayeredDrawableDescriptor, window } from '@kit.ArkUI';
 import { KeyCode } from '@kit.InputKit';
 import { privacyManager } from '@kit.AppGalleryKit';
 import { DosEmulator } from '../model/DosEmulator';
@@ -42,6 +42,12 @@ struct Index {
   // app symbols must stop short of it (left of the three buttons).
   @State titleBarHeight: number = 44;
   @State threeButtonWidth: number = 0;
+  // 2in1 title-row app icon. Image cannot render the layered_image.json as a
+  // plain Resource, and the single-layer media:icon this row used to reference
+  // is gone from base/media (only phone-*dpi copies remain, which a 2in1
+  // device cannot match), so the launcher icon is composited via
+  // LayeredDrawableDescriptor (draw order: background, mask, foreground).
+  private titleIcon: LayeredDrawableDescriptor | undefined = undefined;
   // Navigation gesture-indicator inset in vp for the bottom control overlay:
   // read from the window avoid area, refreshed via avoidAreaChange (rotation,
   // fold). Stays 0 when the window reports no indicator (2in1).
@@ -64,6 +70,7 @@ struct Index {
     this.initPrivacy();
     if (IS_DESKTOP) {
       this.trackTitleButtons();
+      this.loadTitleIcon();
     } else {
       // The bottom overlay must clear the gesture-indicator area.
       this.trackNavIndicator();
@@ -381,6 +388,25 @@ struct Index {
   }
 
   /**
+   * Composite the launcher's layered icon for the 2in1 title row. Failure
+   * leaves the slot empty: the row layout must not depend on the icon being
+   * drawable.
+   */
+  private loadTitleIcon(): void {
+    try {
+      const resManager = this.getUIContext().getHostContext()?.resourceManager;
+      const descriptor = resManager?.getDrawableDescriptor($r('app.media.layered_image').id);
+      if (descriptor instanceof LayeredDrawableDescriptor) {
+        this.titleIcon = descriptor;
+      } else {
+        hilog.error(0x0000, TAG, 'title icon resource is not a layered drawable');
+      }
+    } catch (error) {
+      hilog.error(0x0000, TAG, 'load title icon failed: %{public}s', JSON.stringify(error));
+    }
+  }
+
+  /**
    * 2in1 title row, drawn in place of the hidden system title bar. The app
    * icon and name sit top-left; symbol buttons are right-aligned and reserve
    * the system three-button rect, so they sit left of minimize/maximize/close
@@ -391,7 +417,7 @@ struct Index {
   @Builder
   desktopTitleBar() {
     Row() {
-      Image($r('app.media.icon'))
+      Image(this.titleIcon)
         .width(20)
         .height(20)
         .borderRadius(4)
