@@ -1,31 +1,78 @@
 import { display } from '@kit.ArkUI';
 import { image } from '@kit.ImageKit';
-import type { FrameInfo } from 'libentry.so';
+import type { FrameInfo, MouseLayout } from 'libentry.so';
 import { DosEmulator } from '../model/DosEmulator';
 
-// Gesture thresholds. A touch that lifts within the slosh radius before the
-// long-press timer fires is a tap (left click); crossing the slosh radius
-// engages the left button (drag); holding still past the timer engages the
-// right button instead (context click / right-drag).
+// Single-finger gesture thresholds. A touch that lifts within the slosh
+// radius before the long-press timer fires is a tap (left click); crossing
+// the slosh radius engages the left button (drag); holding still past the
+// timer engages the right button instead (context click / right-drag).
 const LONG_PRESS_MS: number = 480;
 const TOUCH_SLOSH_VP: number = 10;
 
+// Two-finger pan rate: 48 vp of finger travel per wheel notch, matched to
+// the system list-scrolling feel (one finger step ≈ one guest text row).
+const SCROLL_VP_PER_NOTCH: number = 48;
+// Two-finger quick tap: both fingers up within this window and with less
+// than half a notch scrolled counts as a middle click, not a pan.
+const TWO_FINGER_TAP_MS: number = 250;
+// Momentum glide: one 60 fps tick; velocity decays 10% per tick (a firm
+// flick glides for about a second); at most 6 notches total so one wild
+// flick cannot throw the guest a whole screenful; the glide stops once the
+// per-tick distance drops below 0.02 notches (an imperceptible tail).
+const MOMENTUM_TICK_MS: number = 16;
+const MOMENTUM_DECAY: number = 0.90;
+const MOMENTUM_MAX_NOTCHES: number = 6;
+const MOMENTUM_STOP_V: number = 0.02;
+// Physical wheel / touchpad axis events report degrees per change; the
+// standard wheel detent is 15 degrees per notch.
+const WHEEL_DEG_PER_NOTCH: number = 15;
+
 /**
- * Renders the emulated display and forwards touch/mouse input as emulated
- * mouse events. Receives BGRA frames from the native core and draws them
- * into a full-size Canvas, scaled uniformly to fit entirely inside the
- * canvas and centered on both axes; the leftover margins are letterboxed
- * black rather than cropping the picture or stretching it (nearest-neighbour
- * for a crisp retro look).
+ * Touch gesture mode: an explicit replacement for the implicit
+ * "touchId !== -1" test, so an ignored extra finger can never be mistaken
+ * for a state transition of the tracked gesture.
+ */
+enum TouchMode {
+  Idle,
+  Single,
+  Scroll
+}
+
+/**
+ * Renders the emulated display and forwards touch/mouse/wheel input as
+ * emulated mouse events. Receives BGRA frames from the native core and
+ * draws them into a full-size Canvas (nearest-neighbour for a crisp retro
+ * look); the margins around the drawn picture are letterboxed black, the
+ * picture is never cropped nor stretched.
  *
- * Touch (phone/tablet): tap = left click, drag = cursor follows the finger
- * with the left button held, long-press = right button. Physical mouse
- * (2in1 or a paired mouse): moves/clicks/drags map one-to-one. Absolute
- * coordinates travel in frame-pixel space (canvasToFrame); relative deltas
- * are scaled from canvas vp to physical px for window-pixel mickeys. The
- * engine runs the seamless pointer mode ([mouse] mouse_capture=seamless, see
- * DosEmulator.writeConfig), so the INT 33h cursor lands exactly where the
- * finger/pointer is on screen.
+ * Coordinate chain (each stage exists for a reason):
+ * 1. Input events arrive in component vp space — the letterboxed Canvas.
+ * 2. The render rect is the engine draw rect (getMouseLayout): the guest
+ *    frame fitted into the reported canvas size with its true pixel aspect
+ *    ratio applied (authentic PAR, e.g. 320x200 shown at 4:3). The layout
+ *    stays invalid until the engine's first viewport update; a local
+ *    uniform fit is the fallback for that window only. Sharing the
+ *    engine's rect keeps this view and the native input transform on the
+ *    same pixels.
+ * 3. canvasToFrame inverts stage 4 per axis (the PAR fit is anisotropic).
+ * 4. ohos_input maps frame pixels -> engine canvas space
+ *    (offset + pos * draw/render) before the driver sees the value.
+ * 5. MOUSE_EventMoved feeds the absolute value to the seamless INT 33h
+ *    cursor ([mouse] mouse_capture=seamless, see DosEmulator.writeConfig);
+ *    the relative delta (vp x densityPx = window-pixel mickeys) serves
+ *    PS/2-style relative consumers only.
+ *
+ * Touch gesture table (SourceTool MOUSE/TOUCHPAD synthetic touches are
+ * ignored — those devices own the physical paths below):
+ * - tap                    = left click
+ * - drag past the slosh    = left button held (guest-side box select etc.)
+ * - long-press 480 ms      = right click, then right-drag while held
+ * - two-finger pan         = wheel scroll, 48 vp per notch, momentum glide
+ *                            after release (<= 6 notches, decay 0.90/tick)
+ * - two-finger quick tap   = middle click (<= 250 ms, < 0.5 notch scrolled)
+ * - wheel / touchpad axis  = onAxisEvent, 15 degrees per notch
+ * - physical mouse         = handleMouse, one-to-one, no shared state
  */
 @Component
 export struct EmulatorScreen {
@@ -42,15 +89,24 @@ export struct EmulatorScreen {
   private canvasW: number = 1;
   private canvasH: number = 1;
   // Draw rect of the fitted image inside the canvas (for touch -> mouse);
-  // the margins around it are letterboxed black.
+  // the margins around it are letterboxed black. Source of truth: the
+  // engine layout while valid, the local uniform fit before that.
   private drawX: number = 0;
   private drawY: number = 0;
   private drawW: number = 0;
   private drawH: number = 0;
-  // Frame pixels per canvas pixel (uniform: aspect ratio stays fixed).
+  // Frame pixels per canvas pixel. The PAR fit is anisotropic, so the two
+  // axes have their own scale (pxScale along x, pxScaleY along y); with a
+  // square-pixel mode or the fallback fit they are equal.
   private pxScale: number = 1;
-  // --- touch gesture state: one finger (touchId) drives the guest pointer ---
+  private pxScaleY: number = 1;
+  // --- touch gesture state: mode plus tracked fingers. touchId is the
+  // primary finger; touchId2 joins it only for a two-finger pan. Fingers
+  // outside the tracked set are ignored so a resting palm or a pinch
+  // cannot teleport the cursor. ---
+  private touchMode: TouchMode = TouchMode.Idle;
   private touchId: number = -1;
+  private touchId2: number = -1;
   private touchStartX: number = 0;
   private touchStartY: number = 0;
   private touchMoved: boolean = false;
@@ -59,6 +115,23 @@ export struct EmulatorScreen {
   private longPressTimer: number = -1;
   private lastTouchX: number = 0;
   private lastTouchY: number = 0;
+  // --- two-finger pan state: midpoint y of the tracked fingers, gesture
+  // start time, accumulated |notches| (tap discriminator), and a low-pass
+  // velocity estimate in notches/ms with its sample timestamp. ---
+  private scrollLastY: number = 0;
+  private scrollStartMs: number = 0;
+  private scrollAccum: number = 0;
+  private scrollV: number = 0;
+  private scrollLastMs: number = 0;
+  // --- momentum glide after a pan release: interval handle, velocity
+  // (notches/ms) and notches already emitted. ---
+  private momentumTimer: number = -1;
+  private momentumV: number = 0;
+  private momentumSpent: number = 0;
+  // --- one-shot delayed redraw after a canvas resize (see onAreaChange):
+  // the engine refit is async and an idle guest may emit no frame to
+  // carry the refreshed layout. ---
+  private canvasRefitTimer: number = -1;
   // --- physical mouse state: previous sample for relative deltas (-1: no
   // baseline yet, the first sample inside the canvas must not produce a
   // huge jump) ---
@@ -89,10 +162,17 @@ export struct EmulatorScreen {
     this.emu.stopFrameLoop();
     this.releasePixelMap();
     this.cancelLongPress();
-    // A teardown mid-drag must not leave the guest with a stuck button:
+    this.stopMomentum();
+    if (this.canvasRefitTimer !== -1) {
+      clearTimeout(this.canvasRefitTimer);
+      this.canvasRefitTimer = -1;
+    }
+    // A teardown mid-gesture must not leave the guest with a stuck button:
     // the engine never ignores releases, but it waits for one.
     this.releaseTouchButtons();
     this.touchId = -1;
+    this.touchId2 = -1;
+    this.touchMode = TouchMode.Idle;
   }
 
   private releasePixelMap(): void {
@@ -148,16 +228,33 @@ export struct EmulatorScreen {
       ctx.fillRect(0, 0, this.canvasW, this.canvasH);
       return;
     }
-    // Uniform scale fitting the whole frame inside the canvas (aspect ratio
-    // preserved): take the smaller of the width and height ratios so the
-    // picture is never cropped nor stretched, and center it on both axes —
-    // whatever is left over is letterbox margin.
-    const scale: number = Math.min(this.canvasW / this.frameW,
-      this.canvasH / this.frameH);
-    const dw: number = this.frameW * scale;
-    const dh: number = this.frameH * scale;
-    const dx: number = (this.canvasW - dw) / 2;
-    const dy: number = (this.canvasH - dh) / 2;
+    let dw: number;
+    let dh: number;
+    let dx: number;
+    let dy: number;
+    // Single source of truth: the engine owns the draw rect (it applies the
+    // guest's PAR and fits the reported canvas size), so it is read fresh
+    // here; a local uniform fit covers the window before the engine's first
+    // viewport update makes the layout valid.
+    const lay: MouseLayout = this.emu.getMouseLayout();
+    if (lay.valid && lay.drawW > 0 && lay.drawH > 0) {
+      // Engine draw rect: the authentic PAR-corrected fit of the reported
+      // canvas size, in the same vp space as the input events.
+      dw = lay.drawW;
+      dh = lay.drawH;
+      dx = lay.offsetX;
+      dy = lay.offsetY;
+    } else {
+      // Fallback — only until the engine's first viewport update arrives:
+      // local uniform fit of the frame inside the canvas (aspect ratio
+      // preserved), centered on both axes, leftover margins letterboxed.
+      const scale: number = Math.min(this.canvasW / this.frameW,
+        this.canvasH / this.frameH);
+      dw = this.frameW * scale;
+      dh = this.frameH * scale;
+      dx = (this.canvasW - dw) / 2;
+      dy = (this.canvasH - dh) / 2;
+    }
     // Clear only when the draw rect changed: a full-canvas fill before
     // every drawImage shows one black frame per repaint (visible flicker).
     if (dw !== this.drawW || dh !== this.drawH || dx !== this.drawX ||
@@ -165,7 +262,8 @@ export struct EmulatorScreen {
       ctx.fillStyle = '#000000';
       ctx.fillRect(0, 0, this.canvasW, this.canvasH);
     }
-    this.pxScale = scale;
+    this.pxScale = dw / this.frameW;
+    this.pxScaleY = dh / this.frameH;
     this.drawX = dx;
     this.drawY = dy;
     this.drawW = dw;
@@ -174,10 +272,15 @@ export struct EmulatorScreen {
     ctx.drawImage(pm, dx, dy, dw, dh);
   }
 
-  /** Canvas px -> frame px coordinates of the displayed image. */
+  /**
+   * Canvas px -> frame px coordinates of the displayed image. Per-axis
+   * inverse of the native transform (offset + pos * draw/render): the PAR
+   * fit is anisotropic, so a single scale would drift the cursor vertically
+   * in non-square-pixel guest modes.
+   */
   private canvasToFrame(cx: number, cy: number): number[] {
     const fx: number = (cx - this.drawX) / this.pxScale;
-    const fy: number = (cy - this.drawY) / this.pxScale;
+    const fy: number = (cy - this.drawY) / this.pxScaleY;
     return [Math.max(0, Math.min(this.frameW - 1, fx)),
       Math.max(0, Math.min(this.frameH - 1, fy))];
   }
@@ -194,6 +297,14 @@ export struct EmulatorScreen {
   private injectMouseButton(button: number, cx: number, cy: number): void {
     const pos: number[] = this.canvasToFrame(cx, cy);
     this.emu.injectMouse(1, button, pos[0], pos[1], 0, 0);
+  }
+
+  /** wheel: relY carries the notches (float, positive = scroll down; the
+   * native side pushes it through as the guest's INT 33h wheel counter and
+   * accumulates the fraction). The wheel action ignores x/y entirely, so
+   * zeros are passed — cursor positioning is a separate move event. */
+  private injectWheel(notches: number): void {
+    this.emu.injectMouse(2, 0, 0, 0, 0, notches);
   }
 
   private mouseButtonCode(button: MouseButton, down: boolean): number {
@@ -216,6 +327,16 @@ export struct EmulatorScreen {
     }
   }
 
+  /** Ends the momentum glide; a new touch or wheel gesture always calls it
+   * first — the user taking over must cancel the leftover motion. */
+  private stopMomentum(): void {
+    if (this.momentumTimer !== -1) {
+      clearInterval(this.momentumTimer);
+      this.momentumTimer = -1;
+    }
+    this.momentumV = 0;
+  }
+
   private findTouch(touches: TouchObject[], id: number): TouchObject | undefined {
     for (let i = 0; i < touches.length; i++) {
       if (touches[i].id === id) {
@@ -225,34 +346,121 @@ export struct EmulatorScreen {
     return undefined;
   }
 
+  /** Latest y of a touch id: live touch list first, then the changed list
+   * (fresh Down/Up samples), then the caller's fallback. */
+  private touchY(touches: TouchObject[], changed: TouchObject[], id: number,
+    fallback: number): number {
+    const t: TouchObject | undefined = this.findTouch(touches, id);
+    if (t !== undefined) {
+      return t.y;
+    }
+    const c: TouchObject | undefined = this.findTouch(changed, id);
+    return c !== undefined ? c.y : fallback;
+  }
+
   private handleTouchDown(event: TouchEvent): void {
-    if (this.touchId !== -1 || event.changedTouches.length === 0) {
-      // One finger drives the guest pointer; extra fingers are ignored so
-      // resting a palm or a pinch cannot teleport the cursor.
+    // A new touch interrupts a momentum glide: fingers down = take over.
+    this.stopMomentum();
+    if (event.changedTouches.length === 0) {
       return;
     }
-    const t: TouchObject = event.changedTouches[0];
-    this.touchId = t.id;
-    this.touchStartX = t.x;
-    this.touchStartY = t.y;
-    this.touchMoved = false;
-    this.touchLeftDown = false;
-    this.touchRightDown = false;
-    this.lastTouchX = t.x;
-    this.lastTouchY = t.y;
-    this.injectMove(t.x, t.y, 0, 0);
-    this.longPressTimer = setTimeout(() => {
-      this.longPressTimer = -1;
-      // Still held and still inside the slosh radius: right-button press.
-      if (this.touchId !== -1 && !this.touchMoved) {
-        this.touchRightDown = true;
-        this.injectMouseButton(2, this.lastTouchX, this.lastTouchY);
+    if (this.touchMode === TouchMode.Idle) {
+      // First finger: it alone drives the guest pointer.
+      const t: TouchObject = event.changedTouches[0];
+      this.touchId = t.id;
+      this.touchStartX = t.x;
+      this.touchStartY = t.y;
+      this.touchMoved = false;
+      this.touchLeftDown = false;
+      this.touchRightDown = false;
+      this.lastTouchX = t.x;
+      this.lastTouchY = t.y;
+      this.injectMove(t.x, t.y, 0, 0);
+      this.longPressTimer = setTimeout(() => {
+        this.longPressTimer = -1;
+        // Still held and still inside the slosh radius: right-button press.
+        if (this.touchId !== -1 && !this.touchMoved) {
+          this.touchRightDown = true;
+          this.injectMouseButton(2, this.lastTouchX, this.lastTouchY);
+        }
+      }, LONG_PRESS_MS);
+      this.touchMode = TouchMode.Single;
+      return;
+    }
+    if (this.touchMode === TouchMode.Single) {
+      // A second finger arrived: pan candidate — but only while no guest
+      // button is held, so an active drag is never hijacked.
+      let secondId: number = -1;
+      for (let i = 0; i < event.changedTouches.length; i++) {
+        const ct: TouchObject = event.changedTouches[i];
+        if (ct.id !== this.touchId) {
+          secondId = ct.id;
+          break;
+        }
       }
-    }, LONG_PRESS_MS);
+      if (secondId === -1 || this.touchLeftDown || this.touchRightDown) {
+        return;
+      }
+      // Two-finger pan = wheel scroll; the long-press must not fire mid-pan.
+      this.cancelLongPress();
+      this.touchId2 = secondId;
+      this.scrollLastY = (this.touchY(event.touches, event.changedTouches,
+        this.touchId, this.lastTouchY) +
+        this.touchY(event.touches, event.changedTouches, secondId,
+          this.lastTouchY)) / 2;
+      this.scrollStartMs = Date.now();
+      this.scrollAccum = 0;
+      this.scrollV = 0;
+      this.scrollLastMs = Date.now();
+      this.touchMode = TouchMode.Scroll;
+      return;
+    }
+    // TouchMode.Scroll: a third finger is ignored.
+  }
+
+  private handleScrollMove(event: TouchEvent): void {
+    const t1: TouchObject | undefined = this.findTouch(event.touches, this.touchId);
+    const t2: TouchObject | undefined = this.findTouch(event.touches, this.touchId2);
+    if (t1 === undefined && t2 === undefined) {
+      return;
+    }
+    if (t1 === undefined) {
+      // Only the second finger remains on screen: rebase the baseline on it
+      // without producing an increment for this sample.
+      if (t2 !== undefined) {
+        this.scrollLastY = t2.y;
+      }
+      return;
+    }
+    if (t2 === undefined) {
+      // Only the primary finger remains: same rebase, no increment.
+      this.scrollLastY = t1.y;
+      return;
+    }
+    const midY: number = (t1.y + t2.y) / 2;
+    const dy: number = midY - this.scrollLastY;
+    this.scrollLastY = midY;
+    // Fingers up (dy < 0) = scroll down: flip the sign for the wheel.
+    const notches: number = -dy / SCROLL_VP_PER_NOTCH;
+    if (notches !== 0) {
+      this.injectWheel(notches);
+      this.scrollAccum += Math.abs(notches);
+    }
+    const dt: number = Date.now() - this.scrollLastMs;
+    if (dt > 0) {
+      // Low-pass velocity estimate in notches/ms; zero-move samples decay
+      // it toward 0 so a stop-and-release does not glide.
+      this.scrollV = 0.7 * this.scrollV + 0.3 * (notches / dt);
+      this.scrollLastMs = Date.now();
+    }
   }
 
   private handleTouchMove(event: TouchEvent): void {
-    if (this.touchId === -1) {
+    if (this.touchMode === TouchMode.Scroll) {
+      this.handleScrollMove(event);
+      return;
+    }
+    if (this.touchMode !== TouchMode.Single) {
       return;
     }
     const t: TouchObject | undefined = this.findTouch(event.touches, this.touchId);
@@ -282,27 +490,102 @@ export struct EmulatorScreen {
     }
   }
 
+  /**
+   * Two-finger pan end. With one finger still down the pan continues
+   * (rebased on the survivor); once the last finger lifts, a quick tap
+   * without scroll becomes a middle click and a moving release starts the
+   * momentum glide.
+   */
+  private handleScrollUp(event: TouchEvent, cancelled: boolean): void {
+    const up1: boolean = this.findTouch(event.changedTouches, this.touchId) !== undefined;
+    const up2: boolean = this.touchId2 !== -1 &&
+      this.findTouch(event.changedTouches, this.touchId2) !== undefined;
+    if (!up1 && !up2) {
+      // Neither tracked finger lifted: an ignored extra finger.
+      return;
+    }
+    if (cancelled) {
+      // The system took the gesture over: no click, no glide.
+      this.stopMomentum();
+      this.releaseTouchButtons();
+      this.touchMode = TouchMode.Idle;
+      this.touchId = -1;
+      this.touchId2 = -1;
+      return;
+    }
+    if (up1 !== up2 && this.touchId2 !== -1) {
+      // Exactly one of the two lifted; rebase the pan on the survivor and
+      // retire the lifted id so the next Up terminates the gesture.
+      const remainId: number = up1 ? this.touchId2 : this.touchId;
+      const t: TouchObject | undefined = this.findTouch(event.touches, remainId);
+      if (t !== undefined) {
+        this.scrollLastY = t.y;
+      }
+      if (up1) {
+        this.touchId = this.touchId2;
+      }
+      this.touchId2 = -1;
+      return;
+    }
+    // Both tracked fingers are up.
+    const elapsed: number = Date.now() - this.scrollStartMs;
+    if (elapsed <= TWO_FINGER_TAP_MS && this.scrollAccum < 0.5) {
+      // Quick two-finger tap = middle click (classic trackpad gesture).
+      this.injectMouseButton(3, this.lastTouchX, this.lastTouchY);
+      this.injectMouseButton(7, this.lastTouchX, this.lastTouchY);
+    } else if (Math.abs(this.scrollV) * MOMENTUM_TICK_MS >= MOMENTUM_STOP_V) {
+      // Momentum glide: emit notches on a fixed tick with geometric decay
+      // until the cap or the stop threshold ends it.
+      this.momentumV = this.scrollV;
+      this.momentumSpent = 0;
+      this.momentumTimer = setInterval(() => {
+        const d: number = this.momentumV * MOMENTUM_TICK_MS;
+        this.injectWheel(d);
+        this.momentumSpent += Math.abs(d);
+        this.momentumV *= MOMENTUM_DECAY;
+        if (this.momentumSpent >= MOMENTUM_MAX_NOTCHES ||
+          Math.abs(this.momentumV) * MOMENTUM_TICK_MS < MOMENTUM_STOP_V) {
+          this.stopMomentum();
+        }
+      }, MOMENTUM_TICK_MS);
+    }
+    this.touchMode = TouchMode.Idle;
+    this.touchId = -1;
+    this.touchId2 = -1;
+  }
+
   private handleTouchUp(event: TouchEvent, cancelled: boolean): void {
-    if (this.touchId === -1) {
+    if (this.touchMode === TouchMode.Scroll) {
+      this.handleScrollUp(event, cancelled);
+      return;
+    }
+    if (this.touchMode !== TouchMode.Single) {
+      // Idle: a stray Up/Cancel (nothing tracked — e.g. the system delivered
+      // a Cancel after the fingers already lifted during a momentum glide).
+      // The glide must still stop; nothing else to do.
+      this.stopMomentum();
       return;
     }
     const t: TouchObject | undefined = this.findTouch(event.changedTouches, this.touchId);
-    if (t !== undefined) {
-      // Deliver the final movement segment before the release so the guest
-      // sees the drag end where the finger actually lifted.
-      const relX: number = t.x - this.lastTouchX;
-      const relY: number = t.y - this.lastTouchY;
-      if (relX !== 0 || relY !== 0) {
-        this.injectMove(t.x, t.y, relX, relY);
-        this.lastTouchX = t.x;
-        this.lastTouchY = t.y;
-      }
+    if (t === undefined) {
+      // An ignored extra finger lifted; the tracked gesture continues.
+      return;
+    }
+    // Deliver the final movement segment before the release so the guest
+    // sees the drag end where the finger actually lifted.
+    const relX: number = t.x - this.lastTouchX;
+    const relY: number = t.y - this.lastTouchY;
+    if (relX !== 0 || relY !== 0) {
+      this.injectMove(t.x, t.y, relX, relY);
+      this.lastTouchX = t.x;
+      this.lastTouchY = t.y;
     }
     this.cancelLongPress();
     if (cancelled) {
       // The system took the gesture over: release whatever is held, no click.
       this.releaseTouchButtons();
       this.touchId = -1;
+      this.touchMode = TouchMode.Idle;
       return;
     }
     if (this.touchLeftDown) {
@@ -315,6 +598,7 @@ export struct EmulatorScreen {
       this.injectMouseButton(5, this.lastTouchX, this.lastTouchY);
     }
     this.touchId = -1;
+    this.touchMode = TouchMode.Idle;
   }
 
   private releaseTouchButtons(): void {
@@ -332,6 +616,14 @@ export struct EmulatorScreen {
     if (this.frameW <= 0 || this.frameH <= 0) {
       return;
     }
+    // Com synthesized touches from a pointer device must not enter the
+    // touch state machine: the physical paths (onMouse / onAxisEvent)
+    // already own those events and double-processing would corrupt the
+    // tracked-finger state.
+    if (event.sourceTool === SourceTool.MOUSE ||
+      event.sourceTool === SourceTool.TOUCHPAD) {
+      return;
+    }
     switch (event.type) {
       case TouchType.Down:
         this.handleTouchDown(event);
@@ -345,6 +637,48 @@ export struct EmulatorScreen {
       case TouchType.Cancel:
         this.handleTouchUp(event, true);
         break;
+      default:
+        break;
+    }
+  }
+
+  /**
+   * Physical wheel / touchpad two-finger scroll (axis events). Per the
+   * official mouse-interaction guide, axisVertical is a single-change angle
+   * in degrees (15 degrees per standard wheel detent, scaled by the system
+   * wheel-magnification setting that scrollStep reports): negative =
+   * scrolled up/away, positive = scrolled down/toward the user. Positive
+   * therefore already means "scroll down" — the same convention the
+   * injected wheel carries end to end (the native wheel event is pushed
+   * FLIPPED so nothing negates it on the way to MOUSE_EventWheel). If a
+   * touchpad turns out to report a different unit, only the divisor needs
+   * device tuning. BEGIN/UPDATE carry the change; END/CANCEL carry none.
+   */
+  private handleAxis(event: AxisEvent): void {
+    if (this.frameW <= 0 || this.frameH <= 0) {
+      return;
+    }
+    switch (event.action) {
+      case AxisAction.BEGIN: {
+        // A new wheel gesture interrupts a momentum glide, and the guest
+        // cursor first follows the pointer so the scroll lands under it.
+        this.stopMomentum();
+        this.injectMove(event.x, event.y, 0, 0);
+        const v: number = event.axisVertical === undefined ? 0 : event.axisVertical;
+        if (v !== 0) {
+          this.emu.injectMouse(2, 0, 0, 0, 0, v / WHEEL_DEG_PER_NOTCH);
+        }
+        break;
+      }
+      case AxisAction.UPDATE: {
+        const v: number = event.axisVertical === undefined ? 0 : event.axisVertical;
+        if (v !== 0) {
+          this.emu.injectMouse(2, 0, 0, 0, 0, v / WHEEL_DEG_PER_NOTCH);
+        }
+        break;
+      }
+      case AxisAction.END:
+      case AxisAction.CANCEL:
       default:
         break;
     }
@@ -403,15 +737,31 @@ export struct EmulatorScreen {
       .width('100%')
       .height('100%')
       .backgroundColor('#000000')
-      .onAreaChange((oldArea: Area, newArea: Area) => {
+      .onAreaChange((oldArea: Area, newArea: Area): void => {
         this.canvasW = Number(newArea.width);
         this.canvasH = Number(newArea.height);
+        // Report the canvas size so the engine refits its PAR-corrected
+        // draw rect in the same vp space. The refit runs asynchronously on
+        // the engine thread and an idle guest (DosRate) may emit no frame
+        // to carry the refreshed layout, so a one-shot delayed redraw
+        // picks the new rect up without waiting for frames.
+        this.emu.setCanvasSize(Number(newArea.width), Number(newArea.height));
         this.redraw();
+        if (this.canvasRefitTimer !== -1) {
+          clearTimeout(this.canvasRefitTimer);
+        }
+        this.canvasRefitTimer = setTimeout(() => {
+          this.canvasRefitTimer = -1;
+          this.redraw();
+        }, 100);
       })
-      .onTouch((event: TouchEvent) => {
+      .onTouch((event: TouchEvent): void => {
         this.handleTouch(event);
       })
-      .onMouse((event: MouseEvent) => {
+      .onAxisEvent((event: AxisEvent): void => {
+        this.handleAxis(event);
+      })
+      .onMouse((event: MouseEvent): void => {
         this.handleMouse(event);
       })
   }

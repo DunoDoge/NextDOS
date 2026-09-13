@@ -1,5 +1,5 @@
 import testNapi from 'libentry.so';
-import type { FrameInfo } from 'libentry.so';
+import type { FrameInfo, MouseLayout } from 'libentry.so';
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { common } from '@kit.AbilityKit';
 import { BusinessError } from '@kit.BasicServicesKit';
@@ -240,6 +240,18 @@ export class DosEmulator {
     }
   }
 
+  /** Reports the ArkTS canvas size (vp) so the engine computes its draw
+   * rect (aspect-corrected fit) in the same coordinate space. */
+  setCanvasSize(width: number, height: number): void {
+    testNapi.setCanvasSize(width, height);
+  }
+
+  /** Engine-side mouse layout snapshot: draw rect (canvas space) plus
+   * render size; valid=false before the first viewport update. */
+  getMouseLayout(): MouseLayout {
+    return testNapi.getMouseLayout();
+  }
+
   startFrameLoop(): void {
     if (this.timerId !== -1) {
       return;
@@ -268,10 +280,6 @@ export class DosEmulator {
       if (this.tickCount % 600 === 0) {
         hilog.info(0x0000, TAG, 'tick seq=%{public}d w=%{public}d h=%{public}d mode=%{public}d bytes=%{public}d',
           frame.seq, frame.width, frame.height, frame.mode, frame.buffer.byteLength);
-      }
-      if (this.tickCount % 600 === 0) {
-        hilog.info(0x0000, TAG, 'tick seq=%{public}d w=%{public}d h=%{public}d mode=%{public}d',
-          frame.seq, frame.width, frame.height, frame.mode);
       }
     }
   }

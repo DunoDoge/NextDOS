@@ -46,11 +46,31 @@ component and no keyboard-toggle button.
 Pointer input drives the guest's own mouse driver instead of a synthetic
 touchpad: the generated engine config sets `[mouse] mouse_capture = seamless`
 (`DosEmulator.ets`), so the INT 33h cursor follows the absolute position
-handed over by `injectMouse`. `EmulatorScreen` maps touches and physical
-mouse events into that space — tap = left click, slide past the slop
-radius (`TOUCH_SLOSH_VP`) = drag,
-long-press (480 ms, `LONG_PRESS_MS`) = right click; a physical mouse is
-mapped move/click/drag event by event. The `injectMouse` `button` argument
+handed over by `injectMouse`. Coordinates have a single source of truth: the
+engine computes the aspect-corrected draw rect (`GFX_CalcDrawRectInPixels`,
+pixel-aspect-ratio included) on the host canvas that ArkTS reports through
+`setCanvasSize` (`onAreaChange`, vp units — keep the units identical on both
+sides), publishes it as a mutex-guarded `MouseLayout`, and `EmulatorScreen`
+renders the picture into exactly that rect and inverts it for input
+(`canvasToFrame`); before the first viewport update it falls back to a local
+uniform fit. Never reintroduce a second, self-computed letterbox on the
+ArkTS side — the display rect and the mouse mapping rect must stay the same
+rect, or taps drift off the cursor. Canvas-size changes reach the engine
+thread as an SDL user event (`ohos_notify_canvas_changed`), which refits the
+viewport and re-notifies `MOUSE_NewScreenParams`.
+
+Touch gestures (`EmulatorScreen`, single source for semantics): tap = left
+click, slide past the slop radius (`TOUCH_SLOSH_VP`) = left drag, long-press
+(480 ms, `LONG_PRESS_MS`) = right click (then right-drag); two-finger pan =
+wheel scroll (48 vp per notch, fractional deltas the engine accumulates)
+with a decaying momentum glide after lift (≤ 6 notches, stopped by any new
+touch), a quick two-finger tap (≤ 250 ms, < 0.5 notch) = middle click.
+Mode separation is by event source: `onTouch` ignores events whose
+`sourceTool` is MOUSE/TOUCHPAD (those go through `onMouse`/`onAxisEvent`),
+and `onAxisEvent` feeds mouse-wheel/touchpad scrolling as
+`axisVertical / 15` notches (axis values are degrees, positive = scroll
+down — same sign as the engine's `MOUSE_EventWheel`). The `injectMouse`
+`action` argument routes 0=move / 1=button / 2=wheel; the `button` argument
 follows the injection contract (low bits 1/2/3 = left/right/middle, the +4
 bit marks release) and `input_inject_mouse` (`ohos_input.cpp`) translates it
 into SDL button numbers — do not pass raw numbers through, SDL would read

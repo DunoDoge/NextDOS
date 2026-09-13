@@ -3,6 +3,7 @@
 
 #include "ohos_render_backend.h"
 
+#include <atomic>
 #include <cstring>
 
 #include "dosbox.h"
@@ -13,13 +14,13 @@
 #include "utils/math_utils.h"
 #include "utils/rect.h"
 
-std::mutex OhosRenderBackend::snapshot_mutex_          = {};
-std::vector<uint8_t> OhosRenderBackend::snapshot_      = {};
-int OhosRenderBackend::snapshot_width_                 = 0;
-int OhosRenderBackend::snapshot_height_                = 0;
-uint32_t OhosRenderBackend::snapshot_seq_              = 0;
-int OhosRenderBackend::host_canvas_width_              = 1600;
-int OhosRenderBackend::host_canvas_height_             = 1200;
+std::mutex OhosRenderBackend::snapshot_mutex_           = {};
+std::vector<uint8_t> OhosRenderBackend::snapshot_       = {};
+int OhosRenderBackend::snapshot_width_                  = 0;
+int OhosRenderBackend::snapshot_height_                 = 0;
+uint32_t OhosRenderBackend::snapshot_seq_               = 0;
+std::atomic<int> OhosRenderBackend::host_canvas_width_  = 1600;
+std::atomic<int> OhosRenderBackend::host_canvas_height_ = 1200;
 
 OhosRenderBackend::OhosRenderBackend()
 {
@@ -36,12 +37,15 @@ OhosRenderBackend::~OhosRenderBackend()
 
 void OhosRenderBackend::SetHostCanvasSize(int width, int height)
 {
-	std::lock_guard<std::mutex> lock(snapshot_mutex_);
+	// Atomics instead of the snapshot mutex: the canvas size is read on
+	// the engine thread's viewport hot path, and a w/h pair torn by a
+	// concurrent resize is harmless — the canvas-changed update that
+	// follows the resize recomputes the draw rect again.
 	if (width > 0) {
-		host_canvas_width_ = width;
+		host_canvas_width_.store(width, std::memory_order_relaxed);
 	}
 	if (height > 0) {
-		host_canvas_height_ = height;
+		host_canvas_height_.store(height, std::memory_order_relaxed);
 	}
 }
 
@@ -52,8 +56,8 @@ SDL_Window* OhosRenderBackend::GetWindow()
 
 DosBox::Rect OhosRenderBackend::GetCanvasSizeInPixels()
 {
-	std::lock_guard<std::mutex> lock(snapshot_mutex_);
-	return {0, 0, host_canvas_width_, host_canvas_height_};
+	return {0, 0, host_canvas_width_.load(std::memory_order_relaxed),
+	        host_canvas_height_.load(std::memory_order_relaxed)};
 }
 
 void OhosRenderBackend::NotifyViewportSizeChanged(

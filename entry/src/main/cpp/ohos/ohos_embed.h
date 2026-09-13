@@ -63,3 +63,19 @@ void input_inject_mouse(int action, int button, float x, float y,
                         float rel_x, float rel_y);
 
 } // namespace nextdos
+
+// Implemented in ohos_gui.cpp. Wakes the engine's event loop after
+// video_set_canvas_size() so the draw rect and the mouse layout are
+// recomputed immediately instead of at the next video mode change; a
+// no-op while the gui layer has no event id registered (engine not
+// running, or already shut down).
+void ohos_notify_canvas_changed();
+
+// Implemented in ohos_input.cpp. Snapshot of the engine mouse layout: the
+// draw rect in host canvas space plus the guest render size in frame
+// pixels. Callers map injected frame-pixel positions into canvas space as
+// offset + pos * draw / render, and overlay-render into the draw rect;
+// valid is false until the first viewport update after boot.
+void ohos_get_mouse_layout(float& offset_x, float& offset_y, float& draw_w,
+                           float& draw_h, int& render_w, int& render_h,
+                           bool& valid);

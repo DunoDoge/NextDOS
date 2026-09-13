@@ -17,9 +17,11 @@
  *   pause(): void                             // engine pause FSM (audio fade-out)
  *   resume(): void
  *   injectKey(keyCode: number, down: boolean): void
- *   injectMouse(action: number, button: number, x: number, y: number, relX: number, relY: number): void
+ *   injectMouse(action, button, x, y, relX, relY): void  // action 0=move 1=button 2=wheel (relY notches, + = down; x/y unused)
  *   getFrame(): FrameInfo                     // { seq, width, height, mode, buffer } BGRA
  *   getStatus(): EmulatorStatus               // { running, paused }
+ *   setCanvasSize(width: number, height: number): void // canvas size in vp; engine refits its draw rect
+ *   getMouseLayout(): MouseLayout             // { offsetX, offsetY, drawW, drawH, renderW, renderH, valid }
  */
 #include "napi/native_api.h"
 
@@ -310,6 +312,57 @@ static napi_value GetStatus(napi_env env, napi_callback_info info)
     return obj;
 }
 
+/* ---------- setCanvasSize(width, height) ---------- */
+static napi_value SetCanvasSize(napi_env env, napi_callback_info info)
+{
+    size_t argc = 2;
+    napi_value args[2] = {nullptr, nullptr};
+    napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
+
+    if (argc >= 2) {
+        int32_t width = 0;
+        int32_t height = 0;
+        napi_get_value_int32(env, args[0], &width);
+        napi_get_value_int32(env, args[1], &height);
+        nextdos::video_set_canvas_size(width, height);
+    }
+
+    napi_value result;
+    napi_get_undefined(env, &result);
+    return result;
+}
+
+/* ---------- getMouseLayout(): MouseLayout ---------- */
+static napi_value GetMouseLayout(napi_env env, napi_callback_info info)
+{
+    (void)info;
+
+    float offsetX = 0, offsetY = 0, drawW = 0, drawH = 0;
+    int renderW = 0, renderH = 0;
+    bool valid = false;
+    ohos_get_mouse_layout(offsetX, offsetY, drawW, drawH,
+                          renderW, renderH, valid);
+
+    napi_value obj;
+    napi_create_object(env, &obj);
+    napi_value v;
+    napi_create_double(env, offsetX, &v);
+    napi_set_named_property(env, obj, "offsetX", v);
+    napi_create_double(env, offsetY, &v);
+    napi_set_named_property(env, obj, "offsetY", v);
+    napi_create_double(env, drawW, &v);
+    napi_set_named_property(env, obj, "drawW", v);
+    napi_create_double(env, drawH, &v);
+    napi_set_named_property(env, obj, "drawH", v);
+    napi_create_int32(env, renderW, &v);
+    napi_set_named_property(env, obj, "renderW", v);
+    napi_create_int32(env, renderH, &v);
+    napi_set_named_property(env, obj, "renderH", v);
+    napi_get_boolean(env, valid, &v);
+    napi_set_named_property(env, obj, "valid", v);
+    return obj;
+}
+
 EXTERN_C_START
 static napi_value ModuleInit(napi_env env, napi_value exports)
 {
@@ -329,6 +382,8 @@ static napi_value ModuleInit(napi_env env, napi_value exports)
         { "injectMouse", nullptr, InjectMouse, nullptr, nullptr, nullptr, napi_default, nullptr },
         { "getFrame", nullptr, GetFrame, nullptr, nullptr, nullptr, napi_default, nullptr },
         { "getStatus", nullptr, GetStatus, nullptr, nullptr, nullptr, napi_default, nullptr },
+        { "setCanvasSize", nullptr, SetCanvasSize, nullptr, nullptr, nullptr, napi_default, nullptr },
+        { "getMouseLayout", nullptr, GetMouseLayout, nullptr, nullptr, nullptr, napi_default, nullptr },
     };
     napi_define_properties(env, exports, sizeof(desc) / sizeof(desc[0]), desc);
     return exports;

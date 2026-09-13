@@ -8,6 +8,7 @@
 
 #pragma once
 
+#include <atomic>
 #include <cstdint>
 #include <mutex>
 #include <vector>
@@ -81,6 +82,9 @@ private:
 	static int snapshot_width_;
 	static int snapshot_height_;
 	static uint32_t snapshot_seq_;
-	static int host_canvas_width_;
-	static int host_canvas_height_;
+	// std::atomic: written from the NAPI thread (SetHostCanvasSize) while
+	// the engine thread reads them in GetCanvasSizeInPixels(); the snapshot
+	// mutex must not be taken on that hot read path.
+	static std::atomic<int> host_canvas_width_;
+	static std::atomic<int> host_canvas_height_;
 };

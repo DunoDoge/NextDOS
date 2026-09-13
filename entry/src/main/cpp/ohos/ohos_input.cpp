@@ -122,20 +122,23 @@ void push_key_event(SDL_Scancode scancode, bool key_down, Uint16 mods)
 	SDL_PushEvent(&event);
 }
 
-// Coordinate transform: frame pixel space -> host canvas space (the space
-// MOUSE_NewScreenParams() received its draw_rect in). Updated by the gui
-// layer whenever the viewport changes. Guarded by a mutex: the engine
-// thread rewrites it on mode changes while the UI thread reads it for
+// Engine mouse layout: the draw rect in host canvas space (the space
+// MOUSE_NewScreenParams() received its draw_rect in) plus the guest render
+// size in frame pixels, so injected frame-pixel positions map into canvas
+// space as offset + pos * draw / render. Guarded by a mutex: the engine
+// thread rewrites it on viewport changes while the UI thread reads it for
 // every injected pointer event.
-struct MouseTransform {
+struct MouseLayout {
 	float offset_x = 0.0f;
 	float offset_y = 0.0f;
-	float scale_x  = 1.0f;
-	float scale_y  = 1.0f;
+	float draw_w   = 0.0f;
+	float draw_h   = 0.0f;
+	int render_w   = 0;
+	int render_h   = 0;
 	bool valid     = false;
 };
 
-MouseTransform g_mouse_transform = {};
+MouseLayout g_mouse_layout = {};
 
 std::mutex g_mouse_mutex;
 
@@ -146,10 +149,6 @@ float g_last_mouse_x = 0.0f;
 float g_last_mouse_y = 0.0f;
 
 } // namespace
-
-// Implemented in ohos_gui.cpp (it owns draw_rect / render size state).
-void ohos_get_mouse_transform(float& offset_x, float& offset_y,
-                              float& scale_x, float& scale_y);
 
 namespace nextdos {
 
@@ -166,14 +165,24 @@ void input_inject_key(int key_code, bool key_down, bool shift, bool ctrl,
 void input_inject_mouse(int action, int button, float x, float y,
                         float rel_x, float rel_y)
 {
-	// Snapshot under the mutex: the engine thread may swap the transform
-	// (video mode change) between two events, but one event must never mix
-	// a stale offset with a fresh scale.
-	MouseTransform t = {};
+	// Snapshot under the mutex: the engine thread may swap the layout
+	// (viewport change) between two events, but one event must never mix
+	// a stale offset with a fresh draw rect.
+	MouseLayout t = {};
 	{
 		std::lock_guard<std::mutex> lock(g_mouse_mutex);
-		t = g_mouse_transform;
+		t = g_mouse_layout;
 	}
+
+	// Frame pixels -> canvas space: the draw rect spans render_w x
+	// render_h frame pixels. A zero render size only occurs before the
+	// first GFX_SetSize, where valid is false and the scales go unused.
+	const float scale_x =
+	        t.render_w > 0 ? t.draw_w / static_cast<float>(t.render_w)
+	                       : 1.0f;
+	const float scale_y =
+	        t.render_h > 0 ? t.draw_h / static_cast<float>(t.render_h)
+	                       : 1.0f;
 
 	SDL_Event event = {};
 
@@ -184,8 +193,8 @@ void input_inject_mouse(int action, int button, float x, float y,
 		event.motion.windowID  = 0;
 		event.motion.which     = 0;
 		event.motion.state     = 0;
-		event.motion.x    = t.valid ? t.offset_x + x * t.scale_x : x;
-		event.motion.y    = t.valid ? t.offset_y + y * t.scale_y : y;
+		event.motion.x    = t.valid ? t.offset_x + x * scale_x : x;
+		event.motion.y    = t.valid ? t.offset_y + y * scale_y : y;
 		event.motion.xrel = rel_x;
 		event.motion.yrel = rel_y;
 		SDL_PushEvent(&event);
@@ -220,8 +229,8 @@ void input_inject_mouse(int action, int button, float x, float y,
 		event.button.button    = sdl_button;
 		event.button.down   = is_down;
 		event.button.clicks = 1;
-		event.button.x      = t.valid ? t.offset_x + x * t.scale_x : x;
-		event.button.y      = t.valid ? t.offset_y + y * t.scale_y : y;
+		event.button.x      = t.valid ? t.offset_x + x * scale_x : x;
+		event.button.y      = t.valid ? t.offset_y + y * scale_y : y;
 		SDL_PushEvent(&event);
 		{
 			std::lock_guard<std::mutex> lock(g_mouse_mutex);
@@ -231,13 +240,17 @@ void input_inject_mouse(int action, int button, float x, float y,
 		break;
 	}
 	case 2: { // wheel
+		// rel_y is notches with positive = scroll down (the guest's INT 33h
+		// wheel counter is this value verbatim). FLIPPED makes the gui
+		// layer's handler pass the value through un-negated — with NORMAL
+		// it would negate and invert every injected scroll direction.
 		event.type = SDL_EVENT_MOUSE_WHEEL;
 		event.wheel.timestamp  = SDL_GetTicksNS();
 		event.wheel.windowID   = 0;
 		event.wheel.which      = 0;
 		event.wheel.x          = 0.0f;
 		event.wheel.y          = rel_y;
-		event.wheel.direction  = SDL_MOUSEWHEEL_NORMAL;
+		event.wheel.direction  = SDL_MOUSEWHEEL_FLIPPED;
 		SDL_PushEvent(&event);
 		break;
 	}
@@ -246,15 +259,19 @@ void input_inject_mouse(int action, int button, float x, float y,
 
 } // namespace nextdos
 
-void ohos_get_mouse_transform(float& offset_x, float& offset_y,
-                              float& scale_x, float& scale_y)
+void ohos_get_mouse_layout(float& offset_x, float& offset_y, float& draw_w,
+                           float& draw_h, int& render_w, int& render_h,
+                           bool& valid)
 {
 	std::lock_guard<std::mutex> lock(g_mouse_mutex);
-	const MouseTransform& t = g_mouse_transform;
+	const MouseLayout& t = g_mouse_layout;
 	offset_x = t.offset_x;
 	offset_y = t.offset_y;
-	scale_x  = t.scale_x;
-	scale_y  = t.scale_y;
+	draw_w   = t.draw_w;
+	draw_h   = t.draw_h;
+	render_w = t.render_w;
+	render_h = t.render_h;
+	valid    = t.valid;
 }
 
 void ohos_get_last_injected_mouse_pos(float& x, float& y)
@@ -264,13 +281,15 @@ void ohos_get_last_injected_mouse_pos(float& x, float& y)
 	y = g_last_mouse_y;
 }
 
-void ohos_set_mouse_transform(float offset_x, float offset_y, float scale_x,
-                              float scale_y)
+void ohos_set_mouse_layout(float offset_x, float offset_y, float draw_w,
+                           float draw_h, int render_w, int render_h)
 {
 	std::lock_guard<std::mutex> lock(g_mouse_mutex);
-	g_mouse_transform.offset_x = offset_x;
-	g_mouse_transform.offset_y = offset_y;
-	g_mouse_transform.scale_x  = scale_x;
-	g_mouse_transform.scale_y  = scale_y;
-	g_mouse_transform.valid    = true;
+	g_mouse_layout.offset_x = offset_x;
+	g_mouse_layout.offset_y = offset_y;
+	g_mouse_layout.draw_w   = draw_w;
+	g_mouse_layout.draw_h   = draw_h;
+	g_mouse_layout.render_w = render_w;
+	g_mouse_layout.render_h = render_h;
+	g_mouse_layout.valid    = true;
 }

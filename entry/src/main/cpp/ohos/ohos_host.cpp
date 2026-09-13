@@ -368,6 +368,10 @@ bool video_get_frame(uint8_t* dst, int dst_capacity, int* width_out,
 void video_set_canvas_size(int width, int height)
 {
 	OhosRenderBackend::SetHostCanvasSize(width, height);
+	// Refit now, not at the next video mode change: the canvas size (a
+	// window resize) is what changed and nothing else will trigger the
+	// update. No-op before the gui registered its event id.
+	ohos_notify_canvas_changed();
 }
 
 } // namespace nextdos

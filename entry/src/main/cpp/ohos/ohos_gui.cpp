@@ -6,6 +6,7 @@
 // handled by OhosRenderBackend and the ArkTS Canvas layer. Windowing,
 // fullscreen, DPI and titlebar animation are not applicable on OHOS.
 
+#include <atomic>
 #include <memory>
 #include <optional>
 #include <string>
@@ -28,9 +29,9 @@
 
 #include <SDL3/SDL.h>
 
-// Implemented in ohos_input.cpp (owns the touch->canvas transform).
-void ohos_set_mouse_transform(float offset_x, float offset_y, float scale_x,
-                              float scale_y);
+// Implemented in ohos_input.cpp (owns the touch->canvas layout mapping).
+void ohos_set_mouse_layout(float offset_x, float offset_y, float draw_w,
+                           float draw_h, int render_w, int render_h);
 
 // Implemented in ohos_input.cpp; the last position pushed to the engine, so
 // mode/viewport changes keep the cursor where the user last touched instead
@@ -69,6 +70,12 @@ struct {
 	} presentation = {};
 
 	uint32_t start_event_id = UINT32_MAX;
+
+	// Atomic: written by the engine thread (GFX_InitSdl / GFX_Quit) while
+	// the NAPI thread only loads it to decide whether a notification may be
+	// pushed. 0 means no id is registered (SDL not initialized, registration
+	// failed, or SDL shut down again) and the event must never be pushed.
+	std::atomic<uint32_t> canvas_event_id{0};
 } sdl;
 
 void notify_new_mouse_screen_params()
@@ -170,15 +177,24 @@ void update_viewport()
 	sdl.draw.draw_rect_px = draw_rect_px;
 	sdl.renderer->NotifyViewportSizeChanged(draw_rect_px);
 
-	// Frame pixel space -> canvas space transform for touch mouse events
+	// Publish the draw rect plus render size; ohos_input.cpp derives the
+	// frame pixel space -> canvas space mapping from them for injected
+	// pointer events. The render size must fit the backend's frame clamp:
+	// NotifyRenderSizeChanged rejects larger modes and keeps presenting the
+	// previous size, so publishing the oversized values would make the
+	// layout describe a frame the UI never receives and silently break the
+	// 1:1 inverse mapping (the UI falls back to its local fit instead).
 	if (sdl.draw.render_width_px > 0 && sdl.draw.render_height_px > 0 &&
+	    sdl.draw.render_width_px <= OhosRenderBackend::MaxWidth &&
+	    sdl.draw.render_height_px <= OhosRenderBackend::MaxHeight &&
 	    draw_rect_px.w > 0 && draw_rect_px.h > 0) {
-		ohos_set_mouse_transform(
+		ohos_set_mouse_layout(
 		        draw_rect_px.x,
 		        draw_rect_px.y,
-		        draw_rect_px.w / static_cast<float>(sdl.draw.render_width_px),
-		        draw_rect_px.h /
-		                static_cast<float>(sdl.draw.render_height_px));
+		        draw_rect_px.w,
+		        draw_rect_px.h,
+		        sdl.draw.render_width_px,
+		        sdl.draw.render_height_px);
 	}
 }
 
@@ -194,6 +210,21 @@ void notify_viewport_size_changed()
 }
 
 } // namespace
+
+// Pushed from the NAPI thread after the host canvas size changed. SDL
+// events must not be pushed before SDL_Init, and the id stays 0 until
+// GFX_InitSdl registered it, so too-early calls are dropped silently —
+// the boot-time GFX_SetSize -> update_viewport() reads the canvas size
+// fresh, so nothing is lost.
+void ohos_notify_canvas_changed()
+{
+	if (sdl.canvas_event_id == 0) {
+		return;
+	}
+	SDL_Event event = {};
+	event.type      = sdl.canvas_event_id;
+	SDL_PushEvent(&event);
+}
 
 // ---------------------------------------------------------------------------
 // Public GFX_* interface (gui/common.h)
@@ -257,6 +288,12 @@ void GFX_InitSdl()
 		E_Exit("SDL: Error allocating event IDs");
 	}
 
+	// One extra id signals a host canvas size change from the NAPI
+	// thread. Running out of ids here is not fatal: the event only
+	// accelerates a refit that video mode changes already trigger, so 0
+	// is kept as a "never push" sentinel instead of exiting.
+	sdl.canvas_event_id = SDL_RegisterEvents(1);
+
 	const auto sdl_version = SDL_GetVersion();
 
 	LOG_MSG("SDL: Version %d.%d.%d initialised",
@@ -319,6 +356,10 @@ void GFX_Quit()
 {
 	sdl.renderer = {};
 	sdl.window   = nullptr;
+
+	// SDL is going away; clearing the id keeps ohos_notify_canvas_changed()'s
+	// guard honest until the next engine run registers a fresh one.
+	sdl.canvas_event_id = 0;
 
 	SDL_Quit();
 }
@@ -394,6 +435,16 @@ bool GFX_PollAndHandleEvents()
 	SDL_Event event = {};
 
 	while (SDL_PollEvent(&event)) {
+		if (sdl.canvas_event_id != 0 &&
+		    event.type == sdl.canvas_event_id) {
+			// Host canvas size changed (NAPI thread): refit the
+			// draw rect and re-publish the mouse screen params;
+			// render state itself is untouched.
+			update_viewport();
+			notify_new_mouse_screen_params();
+			continue;
+		}
+
 		if (is_user_event(event)) {
 			handle_user_event(event);
 			continue;
