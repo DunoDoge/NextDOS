@@ -60,11 +60,17 @@ thread as an SDL user event (`ohos_notify_canvas_changed`), which refits the
 viewport and re-notifies `MOUSE_NewScreenParams`.
 
 Touch gestures (`EmulatorScreen`, single source for semantics): tap = left
-click, slide past the slop radius (`TOUCH_SLOSH_VP`) = left drag, long-press
-(480 ms, `LONG_PRESS_MS`) = right click (then right-drag); two-finger pan =
-wheel scroll (48 vp per notch, fractional deltas the engine accumulates)
-with a decaying momentum glide after lift (≤ 6 notches, stopped by any new
-touch), a quick two-finger tap (≤ 250 ms, < 0.5 notch) = middle click.
+click, slide past the slop radius (`TOUCH_SLOSH_VP`) = pure cursor move (no
+button — the finger is a position device), double-tap (≤ 300 ms apart,
+`DOUBLE_TAP_MS`, ≤ slop displacement; each tap's click pair injects as it
+lifts, the guest judges the double-click timing itself) = left double click,
+tap-tap-hold-drag (the armed second press slid past the slosh; the long-press
+timer is suppressed while armed so the hold is unlimited) = left drag,
+long-press (480 ms, `LONG_PRESS_MS`) = right click (then right-drag);
+two-finger pan = wheel scroll (48 vp per notch, fractional deltas the engine
+accumulates) with a decaying momentum glide after lift (≤ 6 notches, stopped
+by any new touch), a quick two-finger tap (≤ 250 ms, < 0.5 notch) = middle
+click.
 Mode separation is by event source: `onTouch` ignores events whose
 `sourceTool` is MOUSE/TOUCHPAD (those go through `onMouse`/`onAxisEvent`),
 and `onAxisEvent` feeds mouse-wheel/touchpad scrolling as

@@ -4,11 +4,26 @@ import type { FrameInfo, MouseLayout } from 'libentry.so';
 import { DosEmulator } from '../model/DosEmulator';
 
 // Single-finger gesture thresholds. A touch that lifts within the slosh
-// radius before the long-press timer fires is a tap (left click); crossing
-// the slosh radius engages the left button (drag); holding still past the
-// timer engages the right button instead (context click / right-drag).
+// radius before the long-press timer fires is a tap (left click); a slide
+// past the slosh radius moves the guest cursor only — no button is ever
+// pressed, so repositioning the pointer must not select or drag by
+// accident; holding still past the timer engages the right button instead
+// (context click / right-drag). A second press landing within DOUBLE_TAP_MS
+// of a clean tap and within DOUBLE_TAP_SLOP_VP of its point is the
+// double-tap candidate: holding it suppresses the long-press timer so the
+// hold may last indefinitely, sliding it past the slosh engages the left
+// button (tap-tap-hold-drag), and lifting it quickly just delivers the
+// second plain click of the double-tap.
 const LONG_PRESS_MS: number = 480;
 const TOUCH_SLOSH_VP: number = 10;
+// Double-tap window and displacement tolerance. The two click pairs are
+// injected the moment each tap lifts — the guest measures the double-click
+// timing itself, so this window only arms the tap-tap-hold-drag candidate,
+// it never buffers, delays or merges clicks. The tolerance reuses the
+// slide slosh radius on purpose: a second press beyond it is a fresh
+// gesture, not a double-tap.
+const DOUBLE_TAP_MS: number = 300;
+const DOUBLE_TAP_SLOP_VP: number = TOUCH_SLOSH_VP;
 
 // Two-finger pan rate: 48 vp of finger travel per wheel notch, matched to
 // the system list-scrolling feel (one finger step ≈ one guest text row).
@@ -66,7 +81,14 @@ enum TouchMode {
  * Touch gesture table (SourceTool MOUSE/TOUCHPAD synthetic touches are
  * ignored — those devices own the physical paths below):
  * - tap                    = left click
- * - drag past the slosh    = left button held (guest-side box select etc.)
+ * - slide past the slosh   = cursor move only, no button (the finger is a
+ *                            position device, not a held left button)
+ * - double-tap             = two plain click pairs (<= 300 ms, <= 10 vp
+ *                            apart), each injected as its tap lifts; the
+ *                            guest judges the double-click timing
+ * - tap-tap-hold-drag      = second press of a double-tap held and slid
+ *                            past the slosh = left button held (guest-side
+ *                            box select, sliders); lifting releases it
  * - long-press 480 ms      = right click, then right-drag while held
  * - two-finger pan         = wheel scroll, 48 vp per notch, momentum glide
  *                            after release (<= 6 notches, decay 0.90/tick)
@@ -115,6 +137,16 @@ export struct EmulatorScreen {
   private longPressTimer: number = -1;
   private lastTouchX: number = 0;
   private lastTouchY: number = 0;
+  // --- double-tap candidate state: the last clean tap (a lift that stayed
+  // inside the slosh, pressed no button and was not cancelled) as its lift
+  // timestamp and landing point, plus whether the current touch is the
+  // second press inside the double-tap window (tap-tap-hold-drag
+  // candidate). Cleared on every path back to Idle — no cross-gesture
+  // residue. ---
+  private lastTapUpMs: number = 0;
+  private lastTapX: number = 0;
+  private lastTapY: number = 0;
+  private touchDoubleTapArmed: boolean = false;
   // --- two-finger pan state: midpoint y of the tracked fingers, gesture
   // start time, accumulated |notches| (tap discriminator), and a low-pass
   // velocity estimate in notches/ms with its sample timestamp. ---
@@ -170,6 +202,7 @@ export struct EmulatorScreen {
     // A teardown mid-gesture must not leave the guest with a stuck button:
     // the engine never ignores releases, but it waits for one.
     this.releaseTouchButtons();
+    this.touchDoubleTapArmed = false;
     this.touchId = -1;
     this.touchId2 = -1;
     this.touchMode = TouchMode.Idle;
@@ -376,14 +409,34 @@ export struct EmulatorScreen {
       this.lastTouchX = t.x;
       this.lastTouchY = t.y;
       this.injectMove(t.x, t.y, 0, 0);
-      this.longPressTimer = setTimeout(() => {
+      // Double-tap candidate: this press lands inside the window and the
+      // slop of the last clean tap. The two clicks themselves were already
+      // injected as their taps lifted — arming here only decides how a
+      // held or slid second press is interpreted.
+      const nowMs: number = Date.now();
+      const tapDx: number = t.x - this.lastTapX;
+      const tapDy: number = t.y - this.lastTapY;
+      const tapDt: number = nowMs - this.lastTapUpMs;
+      // Date.now() is a wall clock: a backward step yields a negative delta
+      // that must not arm the candidate, so the window is two-sided.
+      this.touchDoubleTapArmed = this.lastTapUpMs > 0 &&
+        tapDt >= 0 && tapDt <= DOUBLE_TAP_MS &&
+        Math.sqrt(tapDx * tapDx + tapDy * tapDy) <= DOUBLE_TAP_SLOP_VP;
+      if (this.touchDoubleTapArmed) {
+        // tap-tap-hold-drag: no long-press timer — the held second press
+        // must stay a left-drag candidate for an unlimited time instead of
+        // turning into a right click at 480 ms.
         this.longPressTimer = -1;
-        // Still held and still inside the slosh radius: right-button press.
-        if (this.touchId !== -1 && !this.touchMoved) {
-          this.touchRightDown = true;
-          this.injectMouseButton(2, this.lastTouchX, this.lastTouchY);
-        }
-      }, LONG_PRESS_MS);
+      } else {
+        this.longPressTimer = setTimeout(() => {
+          this.longPressTimer = -1;
+          // Still held and still inside the slosh radius: right-button press.
+          if (this.touchId !== -1 && !this.touchMoved) {
+            this.touchRightDown = true;
+            this.injectMouseButton(2, this.lastTouchX, this.lastTouchY);
+          }
+        }, LONG_PRESS_MS);
+      }
       this.touchMode = TouchMode.Single;
       return;
     }
@@ -480,9 +533,12 @@ export struct EmulatorScreen {
       if (Math.sqrt(dx * dx + dy * dy) > TOUCH_SLOSH_VP) {
         this.touchMoved = true;
         this.cancelLongPress();
-        if (!this.touchLeftDown && !this.touchRightDown) {
-          // Finger drag = left button held, so guest-side selection drags
-          // (box select, slider handles) work with the finger directly.
+        // A plain slide is pure cursor movement: no button event at all, so
+        // repositioning the pointer can never box-select or drag. The left
+        // button engages only for the held second press of a double-tap
+        // (tap-tap-hold-drag).
+        if (this.touchDoubleTapArmed && !this.touchLeftDown &&
+          !this.touchRightDown) {
           this.touchLeftDown = true;
           this.injectMouseButton(1, t.x, t.y);
         }
@@ -508,6 +564,8 @@ export struct EmulatorScreen {
       // The system took the gesture over: no click, no glide.
       this.stopMomentum();
       this.releaseTouchButtons();
+      this.touchDoubleTapArmed = false;
+      this.lastTapUpMs = 0;
       this.touchMode = TouchMode.Idle;
       this.touchId = -1;
       this.touchId2 = -1;
@@ -549,6 +607,10 @@ export struct EmulatorScreen {
         }
       }, MOMENTUM_TICK_MS);
     }
+    // A two-finger gesture interrupted the finger sequence, so any pending
+    // double-tap candidate window must not survive it.
+    this.touchDoubleTapArmed = false;
+    this.lastTapUpMs = 0;
     this.touchMode = TouchMode.Idle;
     this.touchId = -1;
     this.touchId2 = -1;
@@ -584,19 +646,34 @@ export struct EmulatorScreen {
     if (cancelled) {
       // The system took the gesture over: release whatever is held, no click.
       this.releaseTouchButtons();
+      this.touchDoubleTapArmed = false;
+      this.lastTapUpMs = 0;
       this.touchId = -1;
       this.touchMode = TouchMode.Idle;
       return;
     }
+    // Any non-tap outcome (a slide, a drag release, a right click) ends the
+    // pending double-tap window: a later press must not arm against a tap
+    // that this gesture already interrupted. A clean tap re-records itself
+    // below, which is what lets tap-tap chain into tap-tap-hold-drag.
+    this.lastTapUpMs = 0;
     if (this.touchLeftDown) {
       this.injectMouseButton(5, this.lastTouchX, this.lastTouchY);
     } else if (this.touchRightDown) {
       this.injectMouseButton(6, this.lastTouchX, this.lastTouchY);
     } else if (!this.touchMoved) {
-      // Lifted in place before the long-press timer: plain left click.
+      // Lifted in place before the long-press timer: plain left click. The
+      // pair goes out immediately — the guest judges double-click timing
+      // from the click pairs themselves, so nothing is buffered here.
       this.injectMouseButton(1, this.lastTouchX, this.lastTouchY);
       this.injectMouseButton(5, this.lastTouchX, this.lastTouchY);
+      // Clean tap (inside the slosh, no button held, not cancelled): only
+      // this outcome may seed the next double-tap candidate.
+      this.lastTapUpMs = Date.now();
+      this.lastTapX = this.lastTouchX;
+      this.lastTapY = this.lastTouchY;
     }
+    this.touchDoubleTapArmed = false;
     this.touchId = -1;
     this.touchMode = TouchMode.Idle;
   }
