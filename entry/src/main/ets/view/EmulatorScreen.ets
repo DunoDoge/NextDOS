@@ -412,13 +412,12 @@ export struct EmulatorScreen {
       // Double-tap candidate: this press lands inside the window and the
       // slop of the last clean tap. The two clicks themselves were already
       // injected as their taps lifted — arming here only decides how a
-      // held or slid second press is interpreted.
-      const nowMs: number = Date.now();
+      // held or slid second press is interpreted. Date.now() is a wall
+      // clock: a backward step yields a negative delta that must not arm,
+      // so the window is two-sided.
       const tapDx: number = t.x - this.lastTapX;
       const tapDy: number = t.y - this.lastTapY;
-      const tapDt: number = nowMs - this.lastTapUpMs;
-      // Date.now() is a wall clock: a backward step yields a negative delta
-      // that must not arm the candidate, so the window is two-sided.
+      const tapDt: number = Date.now() - this.lastTapUpMs;
       this.touchDoubleTapArmed = this.lastTapUpMs > 0 &&
         tapDt >= 0 && tapDt <= DOUBLE_TAP_MS &&
         Math.sqrt(tapDx * tapDx + tapDy * tapDy) <= DOUBLE_TAP_SLOP_VP;
@@ -560,12 +559,14 @@ export struct EmulatorScreen {
       // Neither tracked finger lifted: an ignored extra finger.
       return;
     }
+    // A two-finger gesture interrupts the finger sequence, so any pending
+    // double-tap candidate window does not survive it — cancelled or not.
+    this.touchDoubleTapArmed = false;
+    this.lastTapUpMs = 0;
     if (cancelled) {
       // The system took the gesture over: no click, no glide.
       this.stopMomentum();
       this.releaseTouchButtons();
-      this.touchDoubleTapArmed = false;
-      this.lastTapUpMs = 0;
       this.touchMode = TouchMode.Idle;
       this.touchId = -1;
       this.touchId2 = -1;
@@ -607,10 +608,8 @@ export struct EmulatorScreen {
         }
       }, MOMENTUM_TICK_MS);
     }
-    // A two-finger gesture interrupted the finger sequence, so any pending
-    // double-tap candidate window must not survive it.
-    this.touchDoubleTapArmed = false;
-    this.lastTapUpMs = 0;
+    // A two-finger gesture ended: decide the quick-tap middle click or the
+    // momentum glide, then close out the tracked state.
     this.touchMode = TouchMode.Idle;
     this.touchId = -1;
     this.touchId2 = -1;
@@ -643,20 +642,20 @@ export struct EmulatorScreen {
       this.lastTouchY = t.y;
     }
     this.cancelLongPress();
+    // Anything that is not a clean tap — a cancel, a slide, a drag or right
+    // release — ends the pending double-tap window: a later press must not
+    // arm against a tap this gesture already interrupted. A clean tap
+    // re-records itself below, which is what lets tap-tap chain into
+    // tap-tap-hold-drag.
+    this.touchDoubleTapArmed = false;
+    this.lastTapUpMs = 0;
     if (cancelled) {
       // The system took the gesture over: release whatever is held, no click.
       this.releaseTouchButtons();
-      this.touchDoubleTapArmed = false;
-      this.lastTapUpMs = 0;
       this.touchId = -1;
       this.touchMode = TouchMode.Idle;
       return;
     }
-    // Any non-tap outcome (a slide, a drag release, a right click) ends the
-    // pending double-tap window: a later press must not arm against a tap
-    // that this gesture already interrupted. A clean tap re-records itself
-    // below, which is what lets tap-tap chain into tap-tap-hold-drag.
-    this.lastTapUpMs = 0;
     if (this.touchLeftDown) {
       this.injectMouseButton(5, this.lastTouchX, this.lastTouchY);
     } else if (this.touchRightDown) {
@@ -673,7 +672,6 @@ export struct EmulatorScreen {
       this.lastTapX = this.lastTouchX;
       this.lastTapY = this.lastTouchY;
     }
-    this.touchDoubleTapArmed = false;
     this.touchId = -1;
     this.touchMode = TouchMode.Idle;
   }
