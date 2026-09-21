@@ -1,233 +1,150 @@
-# AGENTS.md — NextDOS
+# NextDOS
 
-HarmonyOS DOS emulator app: a single-module ArkTS UI (`entry`) over a vendored
-DOSBox Staging engine built in embed mode as a native `.so`. Targets phone,
-tablet, and 2in1; API/SDK level 26 (`modelVersion 26.0.0`), stage model.
+HarmonyOS DOS emulator: one ArkTS module (`entry`) over a vendored DOSBox Staging engine built in embed mode as a
+native `libentry.so`; phone, tablet and 2in1, stage model. SDK level, `modelVersion` and the ABI list live in
+`build-profile.template.json5`, `entry/build-profile.json5` and `oh-package.json5` — read them there, never restate them.
 
-## Layout & architecture boundaries
+## Setup & Commands
+
+Two build systems: ArkTS/HAP through hvigor, the engine through CMake; the HAP ships only what hvigor builds.
+
+- Build with the hvigor bundled in DevEco Studio, never a global npm hvigor. For a CLI assembleHap with signing and hdc
+  deploy use the `arkts-build` skill; `arkts-debug` for ArkTS compile errors, `arkts-crash-diagnosis` for jscrash.
+  `codelinter` has no CLI on PATH — run it from the IDE.
+- `build-profile.json5` at the repo root is gitignored and holds local signing material: generate it from
+  `build-profile.template.json5` before the first build, never commit it, commit template changes instead.
+- hvigor drives the native build through `entry/build-profile.json5` → `externalNativeOptions`; its `abiFilters` is the
+  only ABI truth, and the packaged library lands at `entry/build/default/intermediates/libs/default/<abi>/libentry.so`,
+  which ArkTS binds through `entry/oh-package.json5` as `libentry.so` → `file:./src/main/cpp/types/libentry`.
+- After editing `entry/src/main/cpp/**`, reach a compile/link verdict in seconds instead of a full assembleHap:
+  `.native-build-arm64` and `.native-build-x86_64` are gitignored out-of-tree CMake+Ninja configs of
+  `entry/src/main/cpp`; run `cmake --build .` inside one with the `cmake` recorded as `CMAKE_COMMAND` in its
+  `CMakeCache.txt`. Nothing from those trees is ever packaged.
+- Generated and read-only, never committed: `.native-build-arm64`, `.native-build-x86_64`, `build`, `entry/build`,
+  `.hvigor`, `oh_modules`, `node_modules`, `local.properties`, `.idea`.
+
+```bash
+# once per fresh clone, from the repo root: installs and enables the commit-msg hook
+npm install
+git config core.hooksPath .husky
+```
+
+## Testing & Verification
+
+- No real test suite: `entry/src/test` and `entry/src/ohosTest` hold only the hypium/hamock scaffold, and
+  `code-linter.json5` excludes both from linting.
+- Minimum gate for any change: assembleHap succeeds and codelinter reports 0 errors; for C++ edits, additionally get
+  both `.native-build-*` trees to link.
+- Emulator behaviour cannot be verified offline — boot, key injection, mouse mapping, mount and sound are on-device.
+  Build, lint, then ask the user to run.
+- Write the checks you ran into the commit body, e.g. `- codelinter 0 error，assembleHap 通过`.
+
+## Project Layout
 
 ```
 entry/src/main/
-  ets/
-    pages/Index.ets          # the only @Entry page; owns boot, state, device branching,
-                             #   IME text input (imeLayer: invisible TextArea + tap-to-focus)
-    view/                    # UI components: EmulatorScreen, ControlKeyBar (touch),
-                             #   SettingsSheet (模拟器: cpu/mute/auto-mount/restart,
-                             #   网络: nic/port-forwards/nat/ipx,
-                             #   About: version/repo/privacy/license),
-                             #   LicenseSheet (license sub-page over the sheet)
-    model/                   # non-UI: DosEmulator (NAPI controller), DosKeyMap, MountFolder
-    entryability/            # EntryAbility: window setup (immersive, orientation, decor)
-  cpp/
-    napi_init.cpp            # NAPI bridge; module name "entry" → imported as libentry.so
-    types/libentry/Index.d.ts# TS declarations for the NAPI exports (keep in sync)
-    ohos/                    # OHOS platform layer: host (engine thread), gui,
-                             #   render backend, audio, input, resources
-    third_party/             # vendored: dosbox-staging (fork, branch `ohos`), SDL3
-                             #   (static, dummy drivers), asio, iir1, speexdsp-shim,
-                             #   libslirp (static NAT backend + glib shim),
-                             #   prebuilt libpng — read third_party/NOTICE.md before touching
+  ets/pages/          the single @Entry page: boot, state, device branching, IME layer
+  ets/view/           EmulatorScreen (gesture/mouse/axis state machine), ControlKeyBar, SettingsSheet
+  ets/model/          non-UI: DosEmulator (NAPI wrapper), AppSettings, DosKeyMap, MountFolder
+  ets/entryability/   window setup: immersive mode, orientation, decor
+  cpp/napi_init.cpp   NAPI bridge; module name "entry" -> libentry.so
+  cpp/types/libentry/ TS declarations of the NAPI exports
+  cpp/ohos/           platform layer: host thread, gui, render backend, audio, input
+  cpp/third_party/    vendored dosbox-staging (fork branch ohos), SDL, asio, iir1, speexdsp-shim, libslirp, prebuilt libpng
 ```
 
-Data flow: the engine runs on its own native thread and publishes BGRA frames;
-ArkTS polls `getFrame()` every 16 ms (`DosEmulator.startFrameLoop`) and forwards
-frames with a new `seq` to `EmulatorScreen`. Input goes the other way via
-`injectKey`/`injectMouse`. Do not add a second render path or a second
-entry page; extend the existing ones.
+- One entry page, one render path: extend `Index.ets` and `EmulatorScreen.ets`, never add a second.
+- The engine publishes BGRA on its own native thread; ArkTS polls `getFrame()` every 16 ms (`DosEmulator.startFrameLoop`)
+  and forwards only a changed `seq` to `EmulatorScreen`. Input goes back through `injectKey` / `injectMouse`;
+  `setCanvasSize` (from `onAreaChange`, vp units) reaches the engine thread as an SDL user event that refits the viewport.
 
-Text input on phone/tablet uses the system input method, not an in-app
-keyboard: tapping the DOS screen focuses an invisible 1×1 TextArea
-(`Index.imeLayer`), the IME attaches to it automatically and the soft
-keyboard pops up (`KeyboardAvoidMode.RESIZE` keeps the canvas visible);
-`Index.handleImeChange` diffs the field content and forwards it through
-`DosEmulator.typeIntoGuest`. There is deliberately no in-app SoftKeyboard
-component and no keyboard-toggle button.
+## Code Style
 
-Pointer input drives the guest's own mouse driver instead of a synthetic
-touchpad: the generated engine config sets `[mouse] mouse_capture = seamless`
-(`DosEmulator.ets`), so the INT 33h cursor follows the absolute position
-handed over by `injectMouse`. Coordinates have a single source of truth: the
-engine computes the aspect-corrected draw rect (`GFX_CalcDrawRectInPixels`,
-pixel-aspect-ratio included) on the host canvas that ArkTS reports through
-`setCanvasSize` (`onAreaChange`, vp units — keep the units identical on both
-sides), publishes it as a mutex-guarded `MouseLayout`, and `EmulatorScreen`
-renders the picture into exactly that rect and inverts it for input
-(`canvasToFrame`); before the first viewport update it falls back to a local
-uniform fit. Never reintroduce a second, self-computed letterbox on the
-ArkTS side — the display rect and the mouse mapping rect must stay the same
-rect, or taps drift off the cursor. Canvas-size changes reach the engine
-thread as an SDL user event (`ohos_notify_canvas_changed`), which refits the
-viewport and re-notifies `MOUSE_NewScreenParams`.
+- ArkTS is the strict TS subset: explicit types on every lambda parameter and Promise generic, no `any`, no untyped
+  object literals, no destructuring; import system APIs from `@kit.*`.
+- Log through `hilog` with domain `0x0000` and TAG `'NextDOS'`; `%{public}` format specifiers only.
+- A NAPI export change means updating all three together: `napi_init.cpp`, `cpp/types/libentry/Index.d.ts`, and the
+  `DosEmulator` wrapper.
+- Comments state the constraint (why) in English, matching the file being edited.
+- `entry/src/main/cpp/third_party/**` is vendored upstream code: no drive-by reformatting, and every local patch there
+  gets an entry in `NOTICE.md`.
+- Root `.clangd` and `.clang-tidy` carry the same clang-tidy checks (plus `UnusedIncludes: Strict`) but are gitignored
+  IDE config that gates nothing in a build: a clean IDE is not a verification run.
 
-Touch gestures (`EmulatorScreen`, single source for semantics): tap = left
-click, slide past the slop radius (`TOUCH_SLOSH_VP`) = pure cursor move (no
-button — the finger is a position device), double-tap (≤ 300 ms apart,
-`DOUBLE_TAP_MS`, ≤ slop displacement; each tap's click pair injects as it
-lifts, the guest judges the double-click timing itself) = left double click,
-tap-tap-hold-drag (the armed second press slid past the slosh; the long-press
-timer is suppressed while armed so the hold is unlimited) = left drag,
-long-press (480 ms, `LONG_PRESS_MS`) = right click (then right-drag);
-two-finger pan = wheel scroll (48 vp per notch, fractional deltas the engine
-accumulates) with a decaying momentum glide after lift (≤ 6 notches, stopped
-by any new touch), a quick two-finger tap (≤ 250 ms, < 0.5 notch) = middle
-click.
-Mode separation is by event source: `onTouch` ignores events whose
-`sourceTool` is MOUSE/TOUCHPAD (those go through `onMouse`/`onAxisEvent`),
-and `onAxisEvent` feeds mouse-wheel/touchpad scrolling as
-`axisVertical / 15` notches (axis values are degrees, positive = scroll
-down — same sign as the engine's `MOUSE_EventWheel`). The `injectMouse`
-`action` argument routes 0=move / 1=button / 2=wheel; the `button` argument
-follows the injection contract (low bits 1/2/3 = left/right/middle, the +4
-bit marks release) and `input_inject_mouse` (`ohos_input.cpp`) translates it
-into SDL button numbers — do not pass raw numbers through, SDL would read
-2/3 as middle/right and the right press gets stripped by the driver's button
-mask. Mouse events are silently dropped unless the guest is told the window
-is active: `MOUSE_NotifyWindowActive` is called from `ohos_gui.cpp` on boot;
-a boot path that skips it loses all pointer input.
+## Constraints & Gotchas
 
-Licensing: dosbox-staging is GPL-2.0-or-later — the combined app inherits it;
-the repo-root `LICENSE` carries the full GPL-2.0 text and `README.md` states
-the license for users. Keep both, plus the in-app `LicenseSheet`, in sync with
-`entry/src/main/cpp/third_party/NOTICE.md` when third-party components change.
+- The draw rect has ONE source of truth: the engine computes the aspect-corrected rect (`GFX_CalcDrawRectInPixels`,
+  pixel aspect included), publishes it as a mutex-guarded `MouseLayout`, and `EmulatorScreen` renders into exactly that
+  rect and inverts it for input (`canvasToFrame`). Never add an ArkTS-side letterbox.
+- `injectMouse` contract: `action` 0=move / 1=button / 2=wheel; `button` low bits 1/2/3 = left/right/middle, `+4` marks
+  release. `input_inject_mouse` in `ohos_input.cpp` translates it into SDL numbers — never pass raw SDL numbers, or the
+  driver's button mask strips the right press.
+- Pointer events are dropped silently unless the guest believes the window is active: `MOUSE_NotifyWindowActive` is
+  called from `ohos_gui.cpp` on boot, and a boot path that skips it loses all pointer input with no error.
+- The guest's own mouse driver is used, not a synthetic touchpad: the generated config sets
+  `mouse_capture = seamless` (`DosEmulator.ets`), so the INT 33h cursor follows the absolute position from `injectMouse`.
+- Touch semantics live in `EmulatorScreen` alone: tap = left click; a slide past `TOUCH_SLOSH_VP` = cursor move only,
+  never a held button; double-tap = left double click (each click pair injects as its tap lifts, the guest judges the
+  timing); tap-tap-hold-drag = left drag (long-press timer suppressed while armed, so the hold is unlimited);
+  long-press = right click then right-drag; two-finger pan = wheel scroll with a decaying momentum glide; a quick
+  two-finger tap = middle click.
+- `onTouch` ignores events whose `sourceTool` is MOUSE or TOUCHPAD — `onMouse` / `onAxisEvent` serve those, feeding
+  `axisVertical / 15` notches (axis values are degrees, positive = scroll down).
+- The double-tap candidate window (`touchDoubleTapArmed`, `lastTapUpMs`) clears at exactly ONE unconditional point in
+  each of `handleTouchUp` and `handleScrollUp`, placed before the `cancelled` branch so a system-cancelled gesture
+  clears it too; a clean tap re-records itself afterwards, which is what chains tap-tap into tap-tap-hold-drag. Never
+  split that clearing back into per-branch copies, and keep the `tapDt >= 0` guard (`Date.now()` is a wall clock).
+- Text input is the system IME, never an in-app keyboard: tapping the screen focuses an invisible 1×1 TextArea
+  (`Index.imeLayer`) whose content `Index.handleImeChange` diffs into `DosEmulator.typeIntoGuest`, with
+  `KeyboardAvoidMode.RESIZE` keeping the canvas visible. There is deliberately no SoftKeyboard component and no
+  keyboard-toggle button. While that field is focused, hardware-key events still bubble to the root `onKeyEvent`:
+  text-producing keys must not be injected there (`DosKeyMap.isImeHandled`), they already arrive as the field diff.
+- `ohos_input.cpp` whitelists HarmonyOS keyCodes and drops the rest silently: when a key never reaches the guest,
+  check that list first, then `DosEmulator.charToKeyCode`.
+- Engine stop/reset in the same process is fragile: embed mode keeps one-shot static latches, so
+  `DosEmulator.mountFolder` never restarts — it types `mount c <dir>` + `c:` into the *running* guest via
+  `typeIntoGuest` and only regenerates the config so future boots re-mount.
+- Engine config is boot-time: CPU/mute/network edits only call `DosEmulator.rewriteConfig`, and the sheet's
+  重启模拟器 row (`restartEmulator` → `DosEmulator.reset`) applies them; `[mixer]` (`nosound`) is boot-time too.
+  Do not re-introduce a runtime `config -set` path — this fork ships no CONFIG guest program.
+- Guest protected-mode code makes `core=auto` switch to dynrec, and HarmonyOS XPM rejects anonymous RWX mappings: the
+  patched `dyn_cache.h` probes `mprotect(PROT_EXEC)` and, on failure, logs `CPU: Dynrec cache unavailable` and stays on
+  the normal core instead of aborting. Preserve that fallback.
+- Privacy consent is the AGC standardized dialog (`module.json5` metadata `appgallery_privacy_*`) popped by the system:
+  never render a self-drawn one, AppGallery rejects hosted apps that do. `Index.initPrivacy` gates boot on the
+  `privacyManager` signing state and terminates the app on refusal; where the service is absent (emulator) it logs
+  `privacy service unavailable` and boots anyway so development keeps working.
+- `bindSheet` / `bindPopup` / `bindContentCover` `isShow` is one-way: write the state back in `onDisappear`, or a
+  drag/ESC close desyncs the UI. A sub-page opened over the already-open settings sheet uses `bindContentCover`, because
+  sheet-in-sheet has no documented guarantee. `@Builder` parameters are by-value: pass an object wrapper or `$$` where
+  mutation must propagate.
+- `IS_DESKTOP` is `deviceType === '2in1'`: 2in1 draws its own title row with window decor hidden and keeps its symbols
+  left of the system three-button rect, phone/tablet get `ControlKeyBar` and immersive full screen. Windows narrower
+  than 600 vp force `window.Orientation.LANDSCAPE`.
+- Licensing is load-bearing: dosbox-staging is GPL-2.0-or-later and the whole app inherits it — keep root `LICENSE`,
+  `README.md`, the in-app `LicenseSheet` and `NOTICE.md` in sync when a third-party component changes.
 
-## Build & checks
+## Repo Etiquette
 
-- Build through DevEco Studio's bundled hvigor (6.26.x), not a global npm
-  hvigor. For CLI use the `arkts-build` skill (assembleHap, signing, hdc
-  deploy); use `arkts-debug` for ArkTS compile errors and `arkts-crash-diagnosis`
-  for jscrash/runtime faults.
-- Native: CMake ≥ 3.25, C++23 required (set in `entry/src/main/cpp/CMakeLists.txt`),
-  BiSheng compiler, ABIs `arm64-v8a` + `x86_64`.
-- `build-profile.json5` at the repo root is **gitignored** (it holds local
-  signing material); it is generated from `build-profile.template.json5`.
-  Never commit it; commit template changes instead.
-- ArkTS lint: `code-linter.json5` (codelinter, performance + TS recommended
-  rule sets). C++: `.clangd` / `.clang-tidy` at repo root (clang-tidy checks
-  are enforced in IDE diagnostics; `UnusedIncludes: Strict`).
-- Tests are only the hypium/hamock scaffold under `entry/src/test` and
-  `entry/src/ohosTest` — real verification is on-device (emulator behavior,
-  key injection, mount). Check compile + lint, then ask the user to run.
+- Conventional Commits with a Chinese subject: `type(scope): 中文描述`, checked by `commitlint.config.js` through
+  `.husky/commit-msg` — the only git hook, and it validates the message, never the code. It stays inert until
+  `git config core.hooksPath .husky` has been run in that clone; `npm run commitlint` re-checks the last ten messages.
+- A scope is mandatory, from `scope-enum`: `view` (ArkTS UI), `model` (ArkTS non-UI), `engine` (C++ and the engine),
+  `build` (project config, permissions, dependencies), `docs`, `resources`. Register a new scope in
+  `commitlint.config.js` before using it.
+- No `——`, `—` or `--` anywhere in the message; details go in the body, after a blank line, one `- ` bullet per line.
+  Header stays ≤ 100 chars.
+- Branch naming in use: `feature/<topic>`, `fix/<topic>`; `main` is the trunk.
+- Behaviour changes update `README.md` and `AGENTS.md` in the same commit; the `package.json` toolchain plays no part
+  in the HarmonyOS build.
 
-## Conventions
+## Docs Map
 
-- ArkTS is the strict TS subset: explicit types everywhere (including lambda
-  params and Promise generics), no `any`, no untyped object literals, no
-  destructuring; import APIs from `@kit.*`.
-- Logging: `hilog` with domain `0x0000` and TAG `'NextDOS'`; always use
-  `%{public}` format specifiers.
-- When changing NAPI exports, update all three: `napi_init.cpp`,
-  `cpp/types/libentry/Index.d.ts`, and the `DosEmulator` wrapper.
-- Comments state constraints (why), matching the existing English comment
-  style.
-- Commit messages follow Conventional Commits in Chinese, enforced by
-  commitlint (`commitlint.config.js` + the `.husky/commit-msg` hook; a fresh
-  clone needs `npm install` once and `git config core.hooksPath .husky` — the
-  toolchain does not participate in the HarmonyOS build): `type(scope): 中文描述`
-  with a mandatory scope from `view`/`model`/`engine`/`build`/`docs`/`resources`
-  (register new scopes in the config's `scope-enum` first), a Chinese subject,
-  no dashes (`——`/`—`/`--`) anywhere: put details in the body as `- ` bullet
-  lines; header ≤ 100 chars.
-
-## Gotchas
-
-- **Engine embed statics are one-shot.** DOSBox Staging in embed mode has
-  static latches (shutdown, mixer, autoexec, i8042, mouse TSR, VGA mode,
-  IPX `dospage`, INT 15h AH=C0h `biosConfigSeg`, the INT 2F multiplex
-  handler list); stop/reset in the same process is fragile. Mounting a
-  folder therefore never restarts the engine — `DosEmulator.mountFolder` types
-  `mount c <dir>` + `c:` into the *running* guest via `typeIntoGuest`
-  (config is regenerated only so future boots re-mount). Keep it that way.
-  The latch pattern to watch for: a page lazily allocated from the DOS
-  private segment (`DOS_GetMemory`) whose destructor never resets its
-  static address latch gets that same segment handed out again on the next
-  boot (DOS_FreeTableMemory rewinds the cursor) and tramples whatever the
-  fresh boot put there — this surfaced as Windows 3.x SETUP reporting an
-  incompatible XMS driver. The INT 2F multiplex list is symmetric now:
-  every registration is deleted on shutdown, and a delete that misses its
-  handler logs `LOG_WARNING` — if it fires, a teardown lost its matching
-  init.
-- **Dynrec under W^X.** Any guest protected-mode program (32-bit DOS
-  extender, e.g. mpxplay) makes `core=auto` switch to the dynamic
-  recompiler on first PM entry. HarmonyOS XPM rejects anonymous RWX
-  mappings, so the vendored `dyn_cache.h` falls back to a RW mapping with
-  a `mprotect(PROT_EXEC)` probe; if either step fails the engine logs
-  "Dynrec cache unavailable" to dosbox.log and stays on the normal core
-  instead of `E_Exit`/abort. Keep that graceful fallback when touching the
-  cache; the restricted `ohos.permission.kernel.ALLOW_WRITABLE_CODE_MEMORY`
-  is the only sanctioned way back to RWX (PC/2in1|Tablet only). With the
-  permission granted dynrec really runs — and the ARM64 emitter
-  (`risc_armv8le.h`) must then gate its scaled-offset memval fast paths on
-  *offset* alignment: `&cpu_regs` is only 4-byte aligned in .bss, so an
-  8-byte access at a 4-mod-8 offset from it corrupts the encoded base
-  register (the unmasked macro ADD carries into Rn) and segfaults the
-  first translated block.
-- **Privacy consent is the AGC standardized dialog.** The app uses AGC
-  standardized privacy hosting (`module.json5` metadata `appgallery_privacy_*`);
-  the system itself pops the standardized privacy dialog on first launch.
-  Never render a self-drawn privacy dialog — AppGallery review rejects hosted
-  apps that do. `Index.initPrivacy` gates engine boot on the `privacyManager`
-  signing state (`@kit.AppGalleryKit`; only full-mode agreement counts),
-  pulls the dialog via `requestAppPrivacyConsent` when unsigned, and exits
-  after a refusal. Devices without the service (emulator → error
-  1006700003) log and boot anyway so development keeps working.
-- **Key injection whitelist.** `ohos_input.cpp` drops unknown HarmonyOS
-  keyCodes; when a key doesn't reach the guest, check the whitelist there
-  first, and `DosEmulator.charToKeyCode` for typed-text mapping (shift is
-  delivered as separate events; the `shift` param only annotates).
-- **Frame polling.** Only frames with a changed `seq` are forwarded; frame
-  buffers are capped at 1600×1200 BGRA (`MAX_FRAME_BYTES`).
-- **Device branching.** `IS_DESKTOP` = `deviceType === '2in1'`: 2in1 gets a
-  custom title row (window decor hidden, symbols must stop left of the
-  window three-button rect); phone/tablet get the bottom ControlKeyBar and
-  immersive full-screen. The touch control bar is collapsible: when
-  collapsed the bottom bar goes fully transparent and only the gear (quick
-  menu) and expand buttons float over the canvas. The canvas itself is
-  aspect-fit (letterboxed, never cropped or stretched). Windows narrower
-  than 600 vp force landscape (`window.Orientation.LANDSCAPE`) and the
-  settings sheet is centered only above 600 vp.
-- **Audio has no runtime mixer API.** The `[mixer]` section (nosound, rate,
-  prebuffer) is boot-time only; the settings sheet restarts the engine to
-  apply it. When diagnosing "no sound", read the periodic `OHOS: audio stats`
-  lines in dosbox.log (filesDir): `peak>0` proves audible frames reach the
-  device sink; `peak=0` with frames flowing usually just means nothing in the
-  guest is producing sound (the DOS prompt is silent — drive a PC-speaker
-  beep through DEBUG ports 43h/42h/61h to test). A "Sound output disabled"
-  line means `nosound=on` took effect and the OHAudio renderer never starts.
-- **ArkUI popups.** `bindSheet`/`bindPopup`/`bindContentCover` `isShow` is
-  one-way: write the state back in `onDisappear`, or drag/ESC closes desync
-  the UI. To open a sub-page from inside the open settings sheet (e.g. the
-  license page) use `bindContentCover` stacked over the sheet — sheet-in-sheet
-  has no documented guarantee; a full modal covering the open sheet does.
-- `@Builder` function parameters are by-value; pass state via object
-  wrappers or `$$` two-way binding where mutation must propagate.
-- **IME double-injection.** While the invisible IME field is focused, key
-  events from a hardware keyboard bubble to the root `onKeyEvent`. Text
-  producing keys must not be injected there (`DosKeyMap.isImeHandled`) —
-  they already reach the guest through the field content diff; the root
-  handler also skips everything while `imeFocused` is set.
-- Settings that the sheet edits live go through `AppStorage` (`@StorageLink`)
-  and persist via the `AppSettings` preferences store (`model/AppSettings.ets`);
-  `AppSettings.load()` seeds AppStorage during boot (`DosEmulator.bootstrap`)
-  before components read the links, and the setters write memory + AppStorage
-  + store in one call. Existing settings: CPU speed (`[cpu] cpu_cycles` /
-  `cpu_cycles_protected` — the legacy `cycles` prop is deprecated in the
-  staged fork), mute (`[mixer] nosound`, boot-time only), auto-mount of the
-  last C: folder at boot, network (NE2000 on slirp user-mode NAT via
-  `[ethernet] ne2000`, TCP/UDP port forwards, the virtual-NAT parameters
-  `slirp_netmask`/`slirp_host`/`slirp_dns`/`slirp_dhcp_start`, and IPX via
-  `[ipx] ipx` — all boot-time; libslirp is linked statically, see
-  `cpp/CMakeLists.txt` and `third_party/NOTICE.md`), plus the About group
-  (version, repository link, privacy policy link, and the license sub-page).
-  Engine config is boot-time:
-  changing CPU/mute only regenerates the config (`DosEmulator.rewriteConfig`);
-  the sheet's 重启模拟器 row (`host_restart`) applies it. Do not re-introduce
-  a runtime `config -set` injection path — this fork ships no CONFIG guest
-  program.
-
-## Docs to read first
-
-- `entry/src/main/cpp/third_party/NOTICE.md` — exact engine fork/branch,
-  embed-mode hooks (`DOSBOX_OHOS_EMBED`), and license obligations before
-  touching `third_party/` or the platform layer.
-- `entry/src/main/cpp/ohos/ohos_embed.h` — the contract between the NAPI
-  bridge and the engine (frame/input/mount semantics).
+- `entry/src/main/cpp/third_party/NOTICE.md` — engine fork, branch and pinned commits, `DOSBOX_OHOS_EMBED` hooks, and
+  every local patch with its license obligation. Read before touching anything under `entry/src/main/cpp`.
+- `entry/src/main/cpp/ohos/ohos_embed.h` — the NAPI ↔ engine contract (frame, input, mount, restart).
+- `docs/engine-internals.md` — narrative kept out of this file: the embed statics latch inventory and the XMS
+  regression behind it, dynrec under W^X with the ARM64 emitter alignment rule and the restricted RWX permission, and
+  how to read the `OHOS: audio stats` line when diagnosing silence.
+- `entry/src/main/cpp/third_party/SDL/AGENTS.md` — upstream SDL's own rule (no AI-authored changes) wins inside that dir.
+- `.agents/MEMORY.md` — the project memory library where durable session decisions are kept.
