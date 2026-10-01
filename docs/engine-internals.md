@@ -67,8 +67,8 @@ When the permission *is* granted and true RWX is in use, the ARM64 emitter
 alignment: `&cpu_regs` is only 4-byte aligned in `.bss`, so an 8-byte access at
 a 4-mod-8 offset from it corrupts the encoded base register — the unmasked macro
 ADD carries into Rn — and the first translated block segfaults. This patch, the
-W^X patch and the libslirp static-link patch are each recorded as local
-deviations from the `ohos` branch in
+W^X patch and the libslirp static-link patch are each recorded (with
+their `ohos`-branch commit) in
 `entry/src/main/cpp/third_party/NOTICE.md`; keep that file current.
 
 ## Diagnosing "no sound"

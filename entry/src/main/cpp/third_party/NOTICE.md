@@ -4,22 +4,68 @@
 - Path: `entry/src/main/cpp/third_party/dosbox-staging/`
 - Source: https://github.com/DunoDoge/dosbox-staging (fork of
   https://github.com/dosbox-staging/dosbox-staging), branch `ohos`,
-  commits `839986c` + `9d05de8` on top of upstream `8becfce`
-  (2026-08-28 snapshot, v0.84.0-alpha).
+  tip `8e9d593` (`839986c`, `9d05de8`, `6a8f132`, `669e0aa`, `612310a`,
+  `c06bd7b`, `8e9d593` on top of upstream `8becfce`, 2026-08-28
+  snapshot, v0.84.0-alpha). `src/**/docs` directories are stripped from
+  the vendored tree; apart from that the tree matches the branch tip,
+  and the patch entries below describe the branch's deviations from
+  upstream, each tagged with its commit.
 - The `ohos` branch carries the HarmonyOS port: OHOS platform branch in
   CMake, optional-dependency options (OPT_FLUIDSYNTH/OPT_OPUS/
   OPT_SDL3_IMAGE), the `DOSBOX_OHOS_EMBED` embed mode, an audio output
   hook (MIXER_OhosDequeueOutput), and libc++-15 (OHOS NDK) compatibility
   fixes.
-- Local W^X patch (to be upstreamed to the `ohos` branch):
+- W^X code-cache patch (branch commit `669e0aa`):
   `src/cpu/dyn_cache.h` `cache_init()` retries a `PROT_READ|PROT_WRITE`
   mmap when the RWX mapping is rejected and probes `mprotect(PROT_EXEC)`;
-  on failure the dynamic cores report themselves unusable and
+  `cache_init()` now returns bool and `src/cpu/core_dynrec.cpp` /
+  `src/cpu/core_dyn_x86.cpp` (`CPU_Core_*_Cache_Init()`) propagate that
+  result, so on failure the dynamic cores report themselves unusable and
   `src/cpu/cpu.cpp` keeps the normal core instead of `E_Exit` — HarmonyOS
   XPM rejects anonymous RWX mappings, which otherwise aborted the process
   when a protected-mode DOS program switched the auto core to dynrec.
-- Local dynrec emitter alignment patch (to be upstreamed to the `ohos`
-  branch): `src/cpu/core_dynrec/risc_armv8le.h` `gen_mov_memval_*_helper()`
+- Embed-restart latch patches (branch commit `8e9d593`, first batch in
+  `6a8f132`): upstream assumes one engine run per process; embed mode stops
+  and restarts the engine in-process, and every one-shot static latch
+  then misfires on the next run. Reset at teardown/init in
+  `src/dosbox.cpp`/`dosbox.h` (`DOSBOX_ClearShutdownRequest()` at embed
+  entry; `DOSBOX_RebaseWallClockForRestart()` so the first tick does not
+  swallow the whole stop→init span as one clamped increment;
+  `DOSBOX_SetEmbedCycleFloor()` keeping the `cycles=max` auto-adjust
+  floor at the seeded value), `src/audio/mixer.cpp` (clear
+  `thread_should_quit` before respawning the mixer thread),
+  `src/shell/autoexec.cpp` (drop the cached `AUTOEXEC.BAT` and
+  `autoexec_lines` so stale mount lines do not re-run),
+  `src/hardware/input/intel8042.cpp` (restore controller power-on
+  state), `src/hardware/input/mouse_config.cpp` (`mouse_shared.started`),
+  `src/hardware/input/mouseif_dos_driver.cpp` (TSR/driver-info segments
+  so a second MOUSE.COM run does not take the already-installed branch
+  and hang), and `src/hardware/video/vga.cpp` (clear `vga.draw.image_info`
+  and `vga.draw.delay.vtotal` so the mode-change check cannot skip
+  `RENDER_SetSize` and the vertical-timer PIC event — a skipped event
+  freezes rendering on the previous run's last frame).
+- Embed-restart allocation-latch patches (branch commit `8e9d593`):
+  pages taken from the DOS private segment via
+  `DOS_GetMemory` are handed out again after
+  `DOS_FreeTableMemory` rewinds the cursor on the next in-process boot,
+  so stale static addresses write over the fresh boot's allocations.
+  `src/hardware/network/ipx.cpp` resets the `dospage` latch in the IPX
+  destructor (the reused page's ESR stub was overwriting the XMS handler
+  stub — Windows 3.x setup then reported an incompatible XMS driver);
+  `src/ints/bios.cpp` promotes the lazy INT 15h AH=C0h `biosConfigSeg`
+  to file scope and zeroes it in `~BIOS`; `src/dos/dos.cpp`/`dos.h`/
+  `dos_misc.cpp`/`dos_mscdex.cpp` make the static INT 2F multiplex list
+  symmetric across boots (`~DOS` removes `WINDOWS_Int2F_Handler`, the new
+  `DOS_ShutDownMisc()` removes the `DOS_SetupMisc()` handler,
+  `MSCDEX_Destroy()` removes `MSCDEX_Handler`, and a delete that finds
+  no match logs `LOG_WARNING` instead of passing silently).
+- Mixer dequeue hardening + boot probe (branch commit `8e9d593`): `src/audio/mixer.cpp` `MIXER_OhosDequeueOutput()`
+  zero-fills the caller's buffer and returns silence while the output
+  queue is dry (`BulkDequeue` asserts on a zero-sized target), and the
+  mixer thread logs its first loop iterations per boot
+  (`MIXER: probe iter ...`) to pin down which branch the loop takes
+  after an embed restart.
+- Dynrec emitter alignment patch (branch commit `612310a`): `src/cpu/core_dynrec/risc_armv8le.h` `gen_mov_memval_*_helper()`
   gate the scaled-offset LDR/STR fast paths on `(data - addr_data)`
   alignment instead of `data` alignment. When `&cpu_regs` is 8-misaligned
   in .bss (it only needs 4-byte alignment), the unmasked `STR64_IMM` ADD
@@ -85,7 +131,7 @@
   OHOS hilog NDK (domain `0x0000`, tag `NextDOS`).
 - License: **GPL-2.0-or-later** (part of the combined NextDOS work).
 
-## Local libslirp static-link patch (to be upstreamed to the `ohos` branch)
+## Libslirp static-link patch (branch commit `c06bd7b`)
 - Path: `entry/src/main/cpp/third_party/dosbox-staging/src/network/ethernet_slirp.cpp`
 - `DOSBOX_STATIC_SLIRP` (defined by NextDOS' `cpp/CMakeLists.txt`) adds a
   build branch that binds the libslirp function-pointer table to the
@@ -95,7 +141,7 @@
   off) - is left completely intact for builds that do not define the macro,
   so other platforms are unaffected.
 
-## Local configurable virtual-network patch (to be upstreamed to the `ohos` branch)
+## Configurable virtual-network patch (branch commit `c06bd7b`)
 - Paths: `entry/src/main/cpp/third_party/dosbox-staging/src/network/ethernet.cpp`
   and `src/network/ethernet_slirp.cpp`
 - The slirp backend used to hard-code the virtual NAT network
