@@ -54,6 +54,10 @@ export class AppSettings {
   static mute: boolean = false;
   /** Re-mount lastMountDir as C: on the next app boot (via [autoexec]). */
   static autoMount: boolean = false;
+  /** Never mount Index.imeLayer on canvas taps: the system soft keyboard
+   * stays down and text goes through the in-app KeyboardPanel instead.
+   * Pure UI behavior, applied the moment it is set (no engine involvement). */
+  static blockSoftKeyboard: boolean = false;
   /** Last folder successfully mounted as C: ('' = none). */
   static lastMountDir: string = '';
   /** [ethernet] ne2000: emulated NE2000 card on slirp user-mode NAT (boot-time). */
@@ -116,6 +120,10 @@ export class AppSettings {
       if (typeof autoMount === 'boolean') {
         AppSettings.autoMount = autoMount;
       }
+      const blockIme: preferences.ValueType = store.getSync('blockSoftKeyboard', AppSettings.blockSoftKeyboard);
+      if (typeof blockIme === 'boolean') {
+        AppSettings.blockSoftKeyboard = blockIme;
+      }
       const lastDir: preferences.ValueType = store.getSync('lastMountDir', AppSettings.lastMountDir);
       if (typeof lastDir === 'string') {
         AppSettings.lastMountDir = lastDir;
@@ -175,6 +183,12 @@ export class AppSettings {
     AppSettings.autoMount = value;
     AppStorage.setOrCreate('settings.autoMount', value);
     AppSettings.persist('autoMount', value);
+  }
+
+  static setBlockSoftKeyboard(value: boolean): void {
+    AppSettings.blockSoftKeyboard = value;
+    AppStorage.setOrCreate('settings.blockSoftKeyboard', value);
+    AppSettings.persist('blockSoftKeyboard', value);
   }
 
   static setLastMountDir(value: string): void {
@@ -319,6 +333,7 @@ export class AppSettings {
     AppStorage.setOrCreate('settings.cpuCycles', AppSettings.cpuCycles);
     AppStorage.setOrCreate('settings.mute', AppSettings.mute);
     AppStorage.setOrCreate('settings.autoMount', AppSettings.autoMount);
+    AppStorage.setOrCreate('settings.blockSoftKeyboard', AppSettings.blockSoftKeyboard);
     AppStorage.setOrCreate('settings.lastMountDir', AppSettings.lastMountDir);
     AppStorage.setOrCreate('settings.netNe2000', AppSettings.netNe2000);
     AppStorage.setOrCreate('settings.netTcpForwards', AppSettings.netTcpForwards);

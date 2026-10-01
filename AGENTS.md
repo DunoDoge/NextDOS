@@ -44,7 +44,7 @@ git config core.hooksPath .husky
 ```
 entry/src/main/
   ets/pages/          the single @Entry page: boot, state, device branching, IME layer
-  ets/view/           EmulatorScreen (gesture/mouse/axis state machine), ControlKeyBar, SettingsSheet
+  ets/view/           EmulatorScreen (gesture/mouse/axis state machine), ControlKeyBar, KeyboardPanel, SettingsSheet
   ets/model/          non-UI: DosEmulator (NAPI wrapper), AppSettings, DosKeyMap, MountFolder
   ets/entryability/   window setup: immersive mode, orientation, decor
   cpp/napi_init.cpp   NAPI bridge; module name "entry" -> libentry.so
@@ -94,11 +94,18 @@ entry/src/main/
   each of `handleTouchUp` and `handleScrollUp`, placed before the `cancelled` branch so a system-cancelled gesture
   clears it too; a clean tap re-records itself afterwards, which is what chains tap-tap into tap-tap-hold-drag. Never
   split that clearing back into per-branch copies, and keep the `tapDt >= 0` guard (`Date.now()` is a wall clock).
-- Text input is the system IME, never an in-app keyboard: tapping the screen focuses an invisible 1×1 TextArea
+- Text input has two touch paths. System IME: tapping the screen focuses an invisible 1×1 TextArea
   (`Index.imeLayer`) whose content `Index.handleImeChange` diffs into `DosEmulator.typeIntoGuest`, with
-  `KeyboardAvoidMode.RESIZE` keeping the canvas visible. There is deliberately no SoftKeyboard component and no
-  keyboard-toggle button. While that field is focused, hardware-key events still bubble to the root `onKeyEvent`:
-  text-producing keys must not be injected there (`DosKeyMap.isImeHandled`), they already arrive as the field diff.
+  `KeyboardAvoidMode.RESIZE` keeping the canvas visible; while that field is focused, hardware-key events still bubble
+  to the root `onKeyEvent` and text-producing keys must not be injected there (`DosKeyMap.isImeHandled`), they already
+  arrive as the field diff. In-app keyboard: `KeyboardPanel` (full PC layout, sticky Shift/Ctrl/Alt, hold-to-repeat)
+  docks below the canvas in Index's column, so the canvas shrinks and the engine refits through the normal
+  `onAreaChange` → `setCanvasSize` path — never make it a canvas overlay. While it is up, `imeLayer` and
+  `controlOverlay` are unmounted (the panel owns the bottom edge and carries its own hide button), and its sticky
+  modifiers are released in `aboutToDisappear` or the guest keeps them held.
+- The `blockSoftKeyboard` setting (settings sheet 不主动弹出系统软键盘, persisted via `AppSettings`) unmounts
+  `imeLayer` for good: canvas taps then never summon the system soft keyboard, and text goes through `KeyboardPanel`
+  or hardware keyboards only. Pure UI behavior, no engine involvement, effective the moment it is set.
 - `ohos_input.cpp` whitelists HarmonyOS keyCodes and drops the rest silently: when a key never reaches the guest,
   check that list first, then `DosEmulator.charToKeyCode`.
 - Engine stop/reset in the same process is fragile: embed mode keeps one-shot static latches, so

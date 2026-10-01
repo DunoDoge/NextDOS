@@ -25,7 +25,7 @@
 - **状态**: deprecated
 - **来源**: zcode/plans/plan-sess_160867de（ArkTS 层组件清单）; AGENTS.md（「There is deliberately no in-app SoftKeyboard component」）
 - **日期**: 2026-09-18（废止确认）
-- **废止原因**: 手机/平板文本输入改系统 IME（imeLayer 方案，ND-007）；键条仅留 ControlKeyBar（可折叠，折叠时全透明只浮齿轮与展开按钮）。Shift/Ctrl 粘滞键属 8086tiny 时代设计，随组件废止。
+- **废止原因**: 手机/平板文本输入改系统 IME（imeLayer 方案，ND-007）；键条仅留 ControlKeyBar（可折叠，折叠时全透明只浮齿轮与展开按钮）。Shift/Ctrl 粘滞键属 8086tiny 时代设计，随组件废止。**2026-10-01 注**：应用内键盘以新形态回归（KeyboardPanel 停靠式全键盘 + blockSoftKeyboard 设置，见 ND-007）；本条仅约束 8086tiny 时代的 SoftKeyboard 六排组件与旧 AGENTS「刻意无应用内键盘」承诺，不再约束现行实现。
 
 ### [ND-D4] 专用 PC 喇叭方波 audio_output
 - **类别**: decision

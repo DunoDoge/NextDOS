@@ -46,6 +46,7 @@ export struct SettingsSheet {
   @StorageLink('settings.cpuCycles') cpuCycles: string = 'max';
   @StorageLink('settings.mute') mute: boolean = false;
   @StorageLink('settings.autoMount') autoMount: boolean = false;
+  @StorageLink('settings.blockSoftKeyboard') blockSoftKeyboard: boolean = false;
   @StorageLink('settings.lastMountDir') lastMountDir: string = '';
   // Network group (keys must match AppSettings.seedAppStorage() verbatim).
   @StorageLink('settings.netNe2000') netNe2000: boolean = false;
@@ -270,6 +271,32 @@ export struct SettingsSheet {
         Toggle({ type: ToggleType.Switch, isOn: this.autoMount })
           .onChange((isOn: boolean) => {
             AppSettings.setAutoMount(isOn);
+          })
+      }
+      .width('100%')
+      .padding({ left: 16, right: 16, top: 10, bottom: 10 })
+
+      Divider()
+        .strokeWidth(0.5)
+        .color('#FFFFFF14')
+        .margin({ left: 16 })
+
+      Row() {
+        Column() {
+          Text('不主动弹出系统软键盘')
+            .fontSize(16)
+            .fontColor('#FFFFFF')
+          Text('点按屏幕不再唤起系统输入法；输入请使用应用内键盘（控制栏的键盘按钮）')
+            .fontSize(12)
+            .fontColor('#8A8A92')
+            .margin({ top: 2 })
+        }
+        .alignItems(HorizontalAlign.Start)
+        .layoutWeight(1)
+
+        Toggle({ type: ToggleType.Switch, isOn: this.blockSoftKeyboard })
+          .onChange((isOn: boolean) => {
+            AppSettings.setBlockSoftKeyboard(isOn);
           })
       }
       .width('100%')

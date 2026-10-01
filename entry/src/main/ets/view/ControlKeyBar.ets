@@ -35,9 +35,10 @@ export function controlCornerButton(icon: Resource, action: () => void) {
  * (reference layout: ESC ALT DEL | PGUP HOME ↑ END / TAB CTRL INS | PGDN
  * ← ↓ →). Keys deliver plain down/up events like a hardware keyboard;
  * Ctrl/Alt are sticky latches so DOS can still be driven without one.
- * Text input itself goes through the system input method (Index.imeLayer).
- * The settings/collapse corner is drawn by Index (page) so its settings
- * popup can anchor beside the gear button.
+ * Full typing goes through the system input method (Index.imeLayer) or the
+ * in-app KeyboardPanel, whichever the user works with. The settings/collapse
+ * corner is drawn by Index (page) so its settings popup can anchor beside
+ * the gear button.
  */
 @Component
 export struct ControlKeyBar {

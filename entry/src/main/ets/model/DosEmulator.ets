@@ -225,10 +225,13 @@ export class DosEmulator {
     }
   }
 
-  /** Injects a HarmonyOS key event; unknown codes are dropped natively. */
-  injectKey(keyCode: number, down: boolean): void {
+  /** Injects a HarmonyOS key event; unknown codes are dropped natively. The
+   * optional shift hint only fixes the synthesized SDL keysym (see
+   * input_inject_key); modifier semantics come from real Shift/Ctrl/Alt
+   * down/up events the caller wraps the key in. */
+  injectKey(keyCode: number, down: boolean, shift: boolean = false): void {
     if (this.running) {
-      testNapi.injectKey(keyCode, down);
+      testNapi.injectKey(keyCode, down, shift);
     }
   }
 

@@ -9,6 +9,7 @@ import { DosKeyMap } from '../model/DosKeyMap';
 import { MountFolder } from '../model/MountFolder';
 import { EmulatorScreen } from '../view/EmulatorScreen';
 import { ControlKeyBar, controlCornerButton } from '../view/ControlKeyBar';
+import { KeyboardPanel } from '../view/KeyboardPanel';
 import { SettingsSheet } from '../view/SettingsSheet';
 
 const TAG: string = 'NextDOS';
@@ -30,6 +31,14 @@ struct Index {
   @State showSettings: boolean = false;
   @State folderMounted: boolean = false;
   @State mountBusy: boolean = false;
+  // In-app full keyboard (touch devices): replaces the bottom overlay and
+  // docks below the canvas, which shrinks while the engine refits its draw
+  // rect — the same resize the system soft keyboard causes under RESIZE.
+  @State keyboardVisible: boolean = false;
+  // settings.blockSoftKeyboard: when on, canvas taps never mount the IME
+  // field, so the system soft keyboard stays down and text input goes
+  // through the in-app keyboard instead.
+  @StorageLink('settings.blockSoftKeyboard') blockSoftKeyboard: boolean = false;
   // Text buffer of the invisible IME field (imeLayer). Each content change
   // is diffed against imeLastBuffer and forwarded to the guest as keystrokes
   // (see handleImeChange); reset once it grows past 128 chars.
@@ -373,6 +382,23 @@ struct Index {
     this.showSettings = true;
   }
 
+  /**
+   * Shows/hides the in-app full keyboard. Opening also clears any field
+   * focus: a tap may have focused the invisible IME field and its soft
+   * keyboard must not stack over the panel (unmounting imeLayer below
+   * blurs it; clearFocus is the belt to that braces).
+   */
+  private toggleKeyboard(): void {
+    this.keyboardVisible = !this.keyboardVisible;
+    if (this.keyboardVisible) {
+      try {
+        this.getUIContext().getFocusController().clearFocus();
+      } catch (error) {
+        hilog.error(0x0000, TAG, 'clear focus failed: %{public}s', JSON.stringify(error));
+      }
+    }
+  }
+
   @Builder
   settingsSheet() {
     SettingsSheet({
@@ -622,12 +648,14 @@ struct Index {
 
   /**
    * Bottom overlay column floating over the canvas: HiSH-style borderless
-   * control bar (expanded) or the settings/expand corner (collapsed).
+   * control bar (expanded) or the settings/keyboard/expand corner (collapsed).
    * HitTestMode.None lets touches on the strips' empty areas fall through to
    * the canvas (DOS mouse) while keys and the gear keep their own handlers;
    * the expanded strip paints translucent black so the DOS screen stays
    * readable underneath while the keys render full-brightness white, the
-   * collapsed corner is fully transparent.
+   * collapsed corner is fully transparent. Both states carry the keyboard
+   * toggle; the panel itself is docked below the canvas (see build), not
+   * here, so it never covers the DOS picture.
    */
   @Builder
   controlOverlay() {
@@ -639,6 +667,18 @@ struct Index {
 
           Column({ space: 2 }) {
             this.gearMenuButton()
+
+            Column() {
+              SymbolGlyph($r('sys.symbol.keyboard'))
+                .fontSize(22)
+                .fontColor(['#E6E6E6'])
+            }
+            .width('100%')
+            .height(40)
+            .justifyContent(FlexAlign.Center)
+            .onClick(() => {
+              this.toggleKeyboard();
+            })
 
             Column() {
               SymbolGlyph($r('sys.symbol.chevron_down'))
@@ -659,13 +699,18 @@ struct Index {
         .backgroundColor('#CC000000')
         .hitTestBehavior(HitTestMode.None)
       } else {
-        // Collapsed: keep the settings entry above the expand button in the
-        // same bottom-right corner, popup still anchored beside the gear.
-        // Fully transparent so the collapsed corner floats on the canvas.
+        // Collapsed: keep the settings entry above the keyboard and expand
+        // buttons in the same bottom-right corner, popup still anchored
+        // beside the gear. Fully transparent so the collapsed corner floats
+        // on the canvas.
         Row() {
           Blank()
           Column({ space: 2 }) {
             this.gearMenuButton()
+
+            controlCornerButton($r('sys.symbol.keyboard'), () => {
+              this.toggleKeyboard();
+            })
 
             controlCornerButton($r('sys.symbol.chevron_up'), () => {
               this.barExpanded = true;
@@ -698,6 +743,8 @@ struct Index {
    * are diffed into guest keystrokes (handleImeChange). Programmatic
    * requestFocus is deliberately NOT used: it focuses the box but does not
    * attach it to the input method service, so the keyboard never rises.
+   * Unmounted entirely while the in-app keyboard is up or when the
+   * blockSoftKeyboard setting opts out of the system input method.
    */
   @Builder
   imeLayer() {
@@ -731,17 +778,39 @@ struct Index {
       // On-screen overlays float translucently over the DOS screen so they
       // never squeeze the emulator canvas: the Termux control bar is one
       // bottom-anchored column with its own chevron toggle. Text input on
-      // touch devices goes through the system input method: tapping the
-      // screen focuses the invisible field in imeLayer() and the soft
-      // keyboard pops up above the page (KeyboardAvoidMode.RESIZE).
+      // touch devices goes either through the system input method (tap
+      // focuses the invisible field in imeLayer(), soft keyboard rises over
+      // the RESIZE-d page) or through the docked in-app KeyboardPanel —
+      // whichever the user works with. While the panel is up (or the
+      // blockSoftKeyboard setting is on) the IME field stays unmounted so a
+      // canvas tap can never summon the system keyboard over the panel.
       Stack({ alignContent: Alignment.Bottom }) {
         EmulatorScreen({ emu: this.emu })
         if (!IS_DESKTOP) {
-          this.imeLayer()
-          this.controlOverlay()
+          if (!this.blockSoftKeyboard && !this.keyboardVisible) {
+            this.imeLayer()
+          }
+          if (!this.keyboardVisible) {
+            this.controlOverlay()
+          }
         }
       }
       .layoutWeight(1)
+
+      // In-app full keyboard: docked below the Stack, so the canvas shrinks
+      // by the panel height and the engine refits (EmulatorScreen
+      // onAreaChange -> setCanvasSize). The bottom padding holds the same
+      // gesture-indicator clearance as the control overlay.
+      if (!IS_DESKTOP && this.keyboardVisible) {
+        KeyboardPanel({
+          emu: this.emu,
+          onHide: () => {
+            this.keyboardVisible = false;
+          }
+        })
+          .padding({ bottom: Math.max(this.navInsetVp, 28) })
+          .backgroundColor('#F01A1A20')
+      }
     }
     .width('100%')
     .height('100%')
