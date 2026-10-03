@@ -775,15 +775,14 @@ struct Index {
         this.desktopTitleBar()
       }
 
-      // On-screen overlays float translucently over the DOS screen so they
-      // never squeeze the emulator canvas: the Termux control bar is one
-      // bottom-anchored column with its own chevron toggle. Text input on
-      // touch devices goes either through the system input method (tap
-      // focuses the invisible field in imeLayer(), soft keyboard rises over
-      // the RESIZE-d page) or through the docked in-app KeyboardPanel —
-      // whichever the user works with. While the panel is up (or the
-      // blockSoftKeyboard setting is on) the IME field stays unmounted so a
-      // canvas tap can never summon the system keyboard over the panel.
+      // On-screen overlays float over the DOS screen so they never squeeze
+      // the emulator canvas: the Termux control bar is one bottom-anchored
+      // column with its own chevron toggle, and the in-app KeyboardPanel
+      // floats translucently over the bottom edge the same way (see
+      // KeyboardPanel for the see-through and hit-test contract). While the
+      // panel is up (or the blockSoftKeyboard setting is on) the IME field
+      // stays unmounted so a canvas tap can never summon the system
+      // keyboard over the panel.
       Stack({ alignContent: Alignment.Bottom }) {
         EmulatorScreen({ emu: this.emu })
         if (!IS_DESKTOP) {
@@ -793,24 +792,23 @@ struct Index {
           if (!this.keyboardVisible) {
             this.controlOverlay()
           }
+          // 40% black strip over the panel's translucent caps (contract in
+          // KeyboardPanel): the picture stays readable beneath and default
+          // hit testing eats taps between keys. Bottom padding holds the
+          // gesture-indicator clearance.
+          if (this.keyboardVisible) {
+            KeyboardPanel({
+              emu: this.emu,
+              onHide: () => {
+                this.keyboardVisible = false;
+              }
+            })
+              .padding({ bottom: Math.max(this.navInsetVp, 28) })
+              .backgroundColor('#66000000')
+          }
         }
       }
       .layoutWeight(1)
-
-      // In-app full keyboard: docked below the Stack, so the canvas shrinks
-      // by the panel height and the engine refits (EmulatorScreen
-      // onAreaChange -> setCanvasSize). The bottom padding holds the same
-      // gesture-indicator clearance as the control overlay.
-      if (!IS_DESKTOP && this.keyboardVisible) {
-        KeyboardPanel({
-          emu: this.emu,
-          onHide: () => {
-            this.keyboardVisible = false;
-          }
-        })
-          .padding({ bottom: Math.max(this.navInsetVp, 28) })
-          .backgroundColor('#F01A1A20')
-      }
     }
     .width('100%')
     .height('100%')

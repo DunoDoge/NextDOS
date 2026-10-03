@@ -283,10 +283,10 @@ export struct SettingsSheet {
 
       Row() {
         Column() {
-          Text('不主动弹出系统软键盘')
+          Text('禁用系统软键盘')
             .fontSize(16)
             .fontColor('#FFFFFF')
-          Text('点按屏幕不再唤起系统输入法；输入请使用应用内键盘（控制栏的键盘按钮）')
+          Text('点按画面不再唤起系统软键盘，输入请使用应用内键盘（控制栏的键盘按钮）')
             .fontSize(12)
             .fontColor('#8A8A92')
             .margin({ top: 2 })

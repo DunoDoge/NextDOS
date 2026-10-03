@@ -24,15 +24,19 @@ export class KbKey {
 }
 
 /**
- * In-app full PC keyboard for touch devices, docked below the DOS screen
- * (Index swaps the bottom overlay for this panel, so the canvas shrinks and
- * the engine refits its draw rect — the same resize the system soft keyboard
- * causes via KeyboardAvoidMode.RESIZE). Delivers plain down/up pairs through
- * the shared injection path: Shift/Ctrl/Alt are sticky latches whose down
- * event stays held in the guest, non-sticky presses are wrapped in the
- * latched modifiers exactly like ControlKeyBar, and uppercase/symbol output
- * comes from the guest's own shifted-plane translation (the shift argument
- * only fixes the synthesized SDL keysym, see DosEmulator.injectKey).
+ * In-app full PC keyboard for touch devices, floating translucently over the
+ * bottom of the DOS screen (the last child of Index's Stack, above the
+ * canvas). The whole panel is see-through — strip and key caps alike — so
+ * the emulated picture stays readable underneath; only the label text keeps
+ * full contrast. The canvas keeps its full size — the panel never squeezes
+ * it and no setCanvasSize refit happens while typing; default hit testing
+ * consumes every touch on the strip, so taps between keys never reach the
+ * DOS mouse. Delivers plain down/up pairs through the shared injection
+ * path: Shift/Ctrl/Alt are sticky latches whose down event stays held in
+ * the guest, non-sticky presses are wrapped in the latched modifiers
+ * exactly like ControlKeyBar, and uppercase/symbol output comes from the
+ * guest's own shifted-plane translation (the shift argument only fixes the
+ * synthesized SDL keysym, see DosEmulator.injectKey).
  *
  * Known limits, on purpose: CapsLock keeps a local light mirroring one
  * down/up pair per tap (an engine reset while the panel is open can desync
@@ -299,7 +303,8 @@ export struct KeyboardPanel {
     .layoutWeight(key.weight)
     .height('100%')
     .borderRadius(5)
-    .backgroundColor('#33333B')
+    // Translucent cap: the DOS picture must stay readable beneath the strip.
+    .backgroundColor('#8033333B')
     .opacity(this.pressedId === key.id ? 0.4 : 1)
     .onTouch((event: TouchEvent) => {
       if (event.type === TouchType.Down) {
@@ -344,7 +349,7 @@ export struct KeyboardPanel {
         .layoutWeight(1.3)
         .height('100%')
         .borderRadius(5)
-        .backgroundColor('#33333B')
+        .backgroundColor('#8033333B')
         .onClick(() => {
           this.onHide();
         })
