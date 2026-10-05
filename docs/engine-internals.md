@@ -30,10 +30,17 @@ configuration block into the new boot's allocation.
 
 The INT 2F multiplex list is symmetric by construction: every
 `DOS_AddMultiplexHandler` has a matching delete on shutdown
-(`WINDOWS_Int2F_Handler` and `DOS_ShutDownMisc` in `src/dos/dos.cpp`,
+(`WINDOWS_Int2F_Handler` in `src/dos/dos_windows.cpp` and `DOS_ShutDownMisc` in
+`src/dos/dos_misc.cpp`, both driven from `src/dos/dos.cpp`,
 `MSCDEX_Destroy` for the CD driver). A delete that does not find its handler
 logs `LOG_WARNING`; if you see that line, a teardown lost its matching init —
 fix the pairing rather than silencing the warning.
+
+The full latch inventory also includes `mouse_shared.started`
+(`src/hardware/input/mouse_config.cpp`) and the wall-clock / cycle-floor
+latches reset by `DOSBOX_RebaseWallClockForRestart()` and
+`DOSBOX_SetEmbedCycleFloor()` in `src/dosbox.cpp`; `NOTICE.md` carries the
+per-file list.
 
 ## Dynrec under W^X
 
@@ -75,8 +82,14 @@ their `ohos`-branch commit) in
 
 The `[mixer]` section (`nosound`, `rate`, `prebuffer`) is parsed at boot only;
 there is no runtime mixer API, and the settings sheet restarts the engine to
-apply it. A `Sound output disabled` line means `nosound=on` took effect and the
-OHAudio renderer never starts.
+apply it. `MIXER: Sound output disabled ('nosound' mode)` says the mixer runs
+with no output device, which in the embed build means either `nosound=on` or a
+failed OHAudio init (`src/audio/mixer.cpp` `MIXER_Init` calls `init_ohos_sound()`
+and falls back to `set_no_sound()` when it returns false). To tell the two
+apart, read the lines around it: a failed start logs
+`OHOS: Failed to ...` / `OHOS: SetFrameSizeInCallback(...) rejected` from
+`ohos_audio.cpp`, a healthy one logs `OHOS: Audio started (...)`; with
+`nosound=on` neither appears, and the `OHOS: audio stats` line never shows up.
 
 The renderer emits periodic stats into `dosbox.log` (the app's filesDir), not
 into hilog, because hilog truncates. The line is

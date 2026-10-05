@@ -1,6 +1,6 @@
 # NextDOS 记忆索引（MEMORY.md）
 
-> 项目：HarmonyOS DOS 模拟器应用（手机/平板/2in1），包名 `com.dunodoge.nextdos`，API/SDK 26（modelVersion 26.0.0）；单 module ArkTS UI + vendored DOSBox Staging 引擎（fork `ohos` 分支，embed 模式静态链接为 libentry.so）。许可 GPL-2.0-or-later（传染性，分发须随附源码）。
+> 项目：HarmonyOS DOS 模拟器应用（手机/平板/2in1），包名 `com.dunodoge.nextdos`；SDK 级别、`modelVersion` 与 ABI 以 `build-profile.template.json5`、`entry/build-profile.json5`、`oh-package.json5` 为准，勿在此复述。单 module ArkTS UI + vendored DOSBox Staging 引擎（fork `ohos` 分支，embed 模式静态链接为 libentry.so）。许可 GPL-2.0-or-later（传染性，分发须随附源码）。
 > 记忆库共 18 条 = 现行 13 条（ND-001~ND-013）+ 废止 5 条（ND-D1~ND-D5），按主题分层存放；按需只加载所需主题文件，勿整库读入。
 
 ## 主题文件

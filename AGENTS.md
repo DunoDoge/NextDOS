@@ -10,7 +10,8 @@ Two build systems: ArkTS/HAP through hvigor, the engine through CMake; the HAP s
 
 - Build with the hvigor bundled in DevEco Studio, never a global npm hvigor. For a CLI assembleHap with signing and hdc
   deploy use the `arkts-build` skill; `arkts-debug` for ArkTS compile errors, `arkts-crash-diagnosis` for jscrash.
-  `codelinter` has no CLI on PATH — run it from the IDE.
+  `codelinter` comes from the command-line-tools bundle (its SDK/hvigor are too old for assembleHap, see
+  `.agents/memory/build-and-toolchain.md`); the IDE linter is an equivalent path.
 - `build-profile.json5` at the repo root is gitignored and holds local signing material: generate it from
   `build-profile.template.json5` before the first build, never commit it, commit template changes instead.
 - hvigor drives the native build through `entry/build-profile.json5` → `externalNativeOptions`; its `abiFilters` is the
@@ -44,13 +45,21 @@ git config core.hooksPath .husky
 ```
 entry/src/main/
   ets/pages/          the single @Entry page: boot, state, device branching, IME layer
-  ets/view/           EmulatorScreen (gesture/mouse/axis state machine), ControlKeyBar, KeyboardPanel, SettingsSheet
+  ets/view/           EmulatorScreen (gesture/mouse/axis state machine), ControlKeyBar, KeyboardPanel,
+                      SettingsSheet, LicenseSheet
   ets/model/          non-UI: DosEmulator (NAPI wrapper), AppSettings, DosKeyMap, MountFolder
   ets/entryability/   window setup: immersive mode, orientation, decor
+  ets/entrybackupability/  backup extension ability (entry in module.json5)
+  resources/rawfile/  HAP-embedded assets: `fd.img` (boot floppy, copied to filesDir) and `resources/`,
+                      the DOSBox resource tree deployed to filesDir by ohos_resources.cpp.
+                      `resources/drives/y/` is the essentials Y: drive (readonly, `automount = true`
+                      puts `y:\dos` on the guest PATH) holding guest tools: debug.com, xcopy.exe,
+                      deltree.com and the local keytest.com keyboard test program.
   cpp/napi_init.cpp   NAPI bridge; module name "entry" -> libentry.so
   cpp/types/libentry/ TS declarations of the NAPI exports
   cpp/ohos/           platform layer: host thread, gui, render backend, audio, input
-  cpp/third_party/    vendored dosbox-staging (fork branch ohos), SDL, asio, iir1, speexdsp-shim, libslirp, prebuilt libpng
+  cpp/third_party/    vendored dosbox-staging (fork branch ohos), SDL, asio, iir1, speexdsp (+ speexdsp-shim),
+                      libslirp, prebuilt libpng
 ```
 
 - One entry page, one render path: extend `Index.ets` and `EmulatorScreen.ets`, never add a second.
@@ -62,7 +71,9 @@ entry/src/main/
 
 - ArkTS is the strict TS subset: explicit types on every lambda parameter and Promise generic, no `any`, no untyped
   object literals, no destructuring; import system APIs from `@kit.*`.
-- Log through `hilog` with domain `0x0000` and TAG `'NextDOS'`; `%{public}` format specifiers only.
+- Log through `hilog` with domain `0x0000` and TAG `'NextDOS'`; `%{public}` format specifiers only. Known drift:
+  the `entryability`/`entrybackupability` scaffold still logs under TAG `testTag`, and `EmulatorScreen`'s pixel-map
+  error paths use `console.error` — switch them to `hilog` when touching those files.
 - A NAPI export change means updating all three together: `napi_init.cpp`, `cpp/types/libentry/Index.d.ts`, and the
   `DosEmulator` wrapper.
 - Comments state the constraint (why) in English, matching the file being edited.
@@ -83,6 +94,9 @@ entry/src/main/
   called from `ohos_gui.cpp` on boot, and a boot path that skips it loses all pointer input with no error.
 - The guest's own mouse driver is used, not a synthetic touchpad: the generated config sets
   `mouse_capture = seamless` (`DosEmulator.ets`), so the INT 33h cursor follows the absolute position from `injectMouse`.
+  A Windows 3.x guest hooks PS/2 directly and never consumes that absolute channel, so touch degrades to touchpad
+  semantics there (slide to move, then press); the absolute path is only proven on DOS guests. Do not "fix" this with a
+  canvas-pixel to mickey conversion: Win3.x applies its own pointer acceleration (see `docs/prd-engine-touch-abs-rel.md`).
 - Touch semantics live in `EmulatorScreen` alone: tap = left click; a slide past `TOUCH_SLOSH_VP` = cursor move only,
   never a held button; double-tap = left double click (each click pair injects as its tap lifts, the guest judges the
   timing); tap-tap-hold-drag = left drag (long-press timer suppressed while armed, so the hold is unlimited);
@@ -94,7 +108,7 @@ entry/src/main/
   each of `handleTouchUp` and `handleScrollUp`, placed before the `cancelled` branch so a system-cancelled gesture
   clears it too; a clean tap re-records itself afterwards, which is what chains tap-tap into tap-tap-hold-drag. Never
   split that clearing back into per-branch copies, and keep the `tapDt >= 0` guard (`Date.now()` is a wall clock).
-- Text input has two touch paths. System IME: tapping the screen focuses an invisible 1×1 TextArea
+- Text input has two touch paths. System IME: tapping the screen focuses an invisible full-canvas TextArea
   (`Index.imeLayer`) whose content `Index.handleImeChange` diffs into `DosEmulator.typeIntoGuest`, with
   `KeyboardAvoidMode.RESIZE` keeping the canvas visible; while that field is focused, hardware-key events still bubble
   to the root `onKeyEvent` and text-producing keys must not be injected there (`DosKeyMap.isImeHandled`), they already
@@ -108,16 +122,19 @@ entry/src/main/
   `imeLayer` for good: canvas taps then never summon the system soft keyboard, and text goes through `KeyboardPanel`
   or hardware keyboards only. Pure UI behavior, no engine involvement, effective the moment it is set.
 - `ohos_input.cpp` whitelists HarmonyOS keyCodes and drops the rest silently: when a key never reaches the guest,
-  check that list first, then `DosEmulator.charToKeyCode`.
+  check that list first, then the private static `DosEmulator.charToKeyCode` (not exported — read it).
 - Engine stop/reset in the same process is fragile: embed mode keeps one-shot static latches, so
   `DosEmulator.mountFolder` never restarts — it types `mount c <dir>` + `c:` into the *running* guest via
   `typeIntoGuest` and only regenerates the config so future boots re-mount.
 - Engine config is boot-time: CPU/mute/network edits only call `DosEmulator.rewriteConfig`, and the sheet's
   重启模拟器 row (`restartEmulator` → `DosEmulator.reset`) applies them; `[mixer]` (`nosound`) is boot-time too.
-  Do not re-introduce a runtime `config -set` path — this fork ships no CONFIG guest program.
+  Do not re-introduce a runtime `config -set` path: the app never invokes the engine's CONFIG.COM (it exists on `Z:`,
+  but settings reach the engine only through the regenerated config plus `reset`, and CONFIG.COM would rewrite a file
+  the app then overwrites).
 - Guest protected-mode code makes `core=auto` switch to dynrec, and HarmonyOS XPM rejects anonymous RWX mappings: the
-  patched `dyn_cache.h` probes `mprotect(PROT_EXEC)` and, on failure, logs `CPU: Dynrec cache unavailable` and stays on
-  the normal core instead of aborting. Preserve that fallback.
+  patched `dyn_cache.h` probes `mprotect(PROT_EXEC)` and logs the rejection (`DYNCACHE: mprotect(PROT_EXEC) rejected by
+  the platform`), while `cpu.cpp` logs `CPU: Dynrec cache unavailable` and stays on the normal core instead of aborting.
+  Preserve that fallback.
 - Privacy consent is the AGC standardized dialog (`module.json5` metadata `appgallery_privacy_*`) popped by the system:
   never render a self-drawn one, AppGallery rejects hosted apps that do. `Index.initPrivacy` gates boot on the
   `privacyManager` signing state and terminates the app on refusal; where the service is absent (emulator) it logs
@@ -138,8 +155,9 @@ entry/src/main/
   `.husky/commit-msg` — the only git hook, and it validates the message, never the code. It stays inert until
   `git config core.hooksPath .husky` has been run in that clone; `npm run commitlint` re-checks the last ten messages.
 - A scope is mandatory, from `scope-enum`: `view` (ArkTS UI), `model` (ArkTS non-UI), `engine` (C++ and the engine),
-  `build` (project config, permissions, dependencies), `docs`, `resources`. Register a new scope in
-  `commitlint.config.js` before using it.
+  `build` (project config, permissions, dependencies), `docs`, `resources` (severity 1, so an unlisted scope only warns
+  — recent history has used `build(release)` and `docs(competition)`). Register a new scope in `commitlint.config.js`
+  and here before using it.
 - No `——`, `—` or `--` anywhere in the message; details go in the body, after a blank line, one `- ` bullet per line.
   Header stays ≤ 100 chars.
 - Branch naming in use: `feature/<topic>`, `fix/<topic>`; `main` is the trunk.
@@ -150,9 +168,16 @@ entry/src/main/
 
 - `entry/src/main/cpp/third_party/NOTICE.md` — engine fork, branch and pinned commits, `DOSBOX_OHOS_EMBED` hooks, and
   every local patch with its license obligation. Read before touching anything under `entry/src/main/cpp`.
-- `entry/src/main/cpp/ohos/ohos_embed.h` — the NAPI ↔ engine contract (frame, input, mount, restart).
+- `entry/src/main/cpp/ohos/ohos_embed.h` — the NAPI ↔ engine contract (frame, input, restart; mounting is config-only,
+  there is no engine mount entry point).
 - `docs/engine-internals.md` — narrative kept out of this file: the embed statics latch inventory and the XMS
   regression behind it, dynrec under W^X with the ARM64 emitter alignment rule and the restricted RWX permission, and
   how to read the `OHOS: audio stats` line when diagnosing silence.
 - `entry/src/main/cpp/third_party/SDL/AGENTS.md` — upstream SDL's own rule (no AI-authored changes) wins inside that dir.
-- `.agents/MEMORY.md` — the project memory library where durable session decisions are kept.
+- `docs/prd-touch-direct.md` and `docs/prd-engine-touch-abs-rel.md` — per-feature requirement records: the touch
+  semantics baseline that shipped in `EmulatorScreen`, and the suspended Windows 3.x absolute-pointer gap (the
+  touchpad-degradation fallback is the accepted baseline; read before reopening that work).
+- `.agents/MEMORY.md` with the topic files under `.agents/memory/` — the project memory library where durable session
+  decisions are kept; update the entry it touches rather than adding a duplicate.
+- `.github/ISSUE_TEMPLATE/` — the user-facing Chinese bug form (`bug_report.yml`: device, system, app version, category,
+  logs) plus `config.yml`; keep its categories in step with the shipped feature set.

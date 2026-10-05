@@ -5,16 +5,38 @@
 - Source: https://github.com/DunoDoge/dosbox-staging (fork of
   https://github.com/dosbox-staging/dosbox-staging), branch `ohos`,
   tip `8e9d593` (`839986c`, `9d05de8`, `6a8f132`, `669e0aa`, `612310a`,
-  `c06bd7b`, `8e9d593` on top of upstream `8becfce`, 2026-08-28
-  snapshot, v0.84.0-alpha). `src/**/docs` directories are stripped from
-  the vendored tree; apart from that the tree matches the branch tip,
+  `c06bd7b`, `8e9d593` on top of upstream `8becfce`, v0.84.0-alpha; tip
+  dated 2026-10-01, upstream base 2026-08-10). Top-level `docs/`,
+  `tests/` and every `src/**/docs/` directory are stripped from the
+  vendored tree, and root `CMakeLists.txt` differs from the tip by line
+  endings only; apart from that the tree is byte-identical to the tip,
   and the patch entries below describe the branch's deviations from
   upstream, each tagged with its commit.
 - The `ohos` branch carries the HarmonyOS port: OHOS platform branch in
-  CMake, optional-dependency options (OPT_FLUIDSYNTH/OPT_OPUS/
-  OPT_SDL3_IMAGE), the `DOSBOX_OHOS_EMBED` embed mode, an audio output
-  hook (MIXER_OhosDequeueOutput), and libc++-15 (OHOS NDK) compatibility
-  fixes.
+  CMake (embed-mode source sets and link deps: `src/gui/CMakeLists.txt`
+  drops `sdl_gui.cpp` but keeps the render pipeline and links `glad`
+  unconditionally, `src/hardware/CMakeLists.txt` links the in-tree
+  `speexdsp` target instead of pkg-config, `src/misc/CMakeLists.txt` adds
+  a `DOSBOX_PLATFORM_OHOS` branch for musl, `src/dos/CMakeLists.txt` and
+  `src/shell/CMakeLists.txt` gate host-only pieces, and
+  `cmake/add_copy_assets.cmake` skips `add_dependencies(dosbox ...)` when
+  `DOSBOX_OHOS_EMBED` defines no host target), optional-dependency
+  options and gating (OPT_FLUIDSYNTH/OPT_OPUS/OPT_SDL3_IMAGE feed
+  `C_FLUIDSYNTH`/`C_OPUS`/`C_SDL3_IMAGE` in
+  `src/dosbox_config.h.in.cmake`; `src/midi/fluidsynth.cpp` and the
+  FluidSynth entries in `src/midi/midi.cpp` compile out without
+  `C_FLUIDSYNTH`, `SHOWPIC.EXE` in `src/dos/dos_programs.cpp` and the
+  Opus decoder under `src/libs/decoders/` need their own define), the
+  `DOSBOX_OHOS_EMBED` embed mode, an audio output hook
+  (MIXER_OhosDequeueOutput), a link stub for
+  `Shader::BuildShaderProgram()` in `src/gui/render/shader.cpp` when
+  `C_OPENGL` is off, and libc++-15 (OHOS NDK) compatibility fixes
+  (`src/config/config.cpp`, `src/dos/programs/mem.cpp`,
+  `src/dos/programs/mount.cpp`, `src/misc/messages.cpp`: `std::ranges`
+  algorithms replaced by their `<algorithm>` forms;
+  `src/dos/cdrom_image.cpp`: local `PathHash` because libc++ 15 has no
+  `std::hash<std::filesystem::path>`; `src/gui/render/shader_manager.cpp`:
+  added `<sstream>`).
 - W^X code-cache patch (branch commit `669e0aa`):
   `src/cpu/dyn_cache.h` `cache_init()` retries a `PROT_READ|PROT_WRITE`
   mmap when the RWX mapping is rejected and probes `mprotect(PROT_EXEC)`;
@@ -114,7 +136,9 @@
   built as a static library and linked into `libentry.so` (see the
   `DOSBOX_STATIC_SLIRP` local patch below). The vendored version must stay
   **v4.8.0**: it matches the fork's public header
-  `src/libs/include/slirp/libslirp.h` line for line.
+  `src/libs/include/slirp/libslirp.h` except line 28, where the vendored
+  copy enables `#include "libslirp-version.h"` (a hand-written replacement
+  for the meson-generated file) while the engine copy has it commented out.
 - License: **BSD-3-Clause** (see `libslirp/COPYRIGHT`).
 
 ## glib compatibility shim (hand-written, for libslirp)

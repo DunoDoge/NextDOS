@@ -18,14 +18,14 @@
 - **状态**: deprecated
 - **来源**: zcode/plans/plan-sess_160867de（NAPI 契约 injectKey(value)）; zcode/plans/plan-sess_cfcf9be4（阶段 4）
 - **日期**: 2026-09-18（废止确认）
-- **废止原因**: 迁移后 injectKey 改传 (keyCode, down, shift/ctrl/alt)，native 合成 SDL_KeyboardEvent 经 SDL_PushEvent 注入、MAPPER_CheckEvent 零改动复用（mapper 自行处理修饰键）；XtScanCodeMap 重写为 DosKeyMap（删 SDL keysym 编码），verify_keymap.py 与 BIOS 解码链一并归档删除。当前 NAPI 面 13 个导出方法签名以 cfcf9be4 阶段 3/4 为准（napi_init.cpp + Index.d.ts + DosEmulator 三处同步，ND-008）。
+- **废止原因**: 迁移后 injectKey 改传 (keyCode, down, shift/ctrl/alt)，native 合成 SDL_KeyboardEvent 经 SDL_PushEvent 注入、MAPPER_CheckEvent 零改动复用（mapper 自行处理修饰键）；XtScanCodeMap 重写为 DosKeyMap（删 SDL keysym 编码），verify_keymap.py 与 BIOS 解码链一并归档删除。当前 NAPI 面 17 个导出（init/initResources/start/stop/mountImage/unmountImage/mountFolder/unmountFolder/reset/pause/resume/injectKey/injectMouse/getFrame/getStatus/setCanvasSize/getMouseLayout），签名以 napi_init.cpp 为准并须与 Index.d.ts、DosEmulator 三处同步（ND-008）。
 
 ### [ND-D3] 应用内 SoftKeyboard 六排组件
 - **类别**: decision
 - **状态**: deprecated
 - **来源**: zcode/plans/plan-sess_160867de（ArkTS 层组件清单）; AGENTS.md（「There is deliberately no in-app SoftKeyboard component」）
 - **日期**: 2026-09-18（废止确认）
-- **废止原因**: 手机/平板文本输入改系统 IME（imeLayer 方案，ND-007）；键条仅留 ControlKeyBar（可折叠，折叠时全透明只浮齿轮与展开按钮）。Shift/Ctrl 粘滞键属 8086tiny 时代设计，随组件废止。**2026-10-01 注**：应用内键盘以新形态回归（KeyboardPanel 停靠式全键盘 + blockSoftKeyboard 设置，见 ND-007）；本条仅约束 8086tiny 时代的 SoftKeyboard 六排组件与旧 AGENTS「刻意无应用内键盘」承诺，不再约束现行实现。
+- **废止原因**: 手机/平板文本输入改系统 IME（imeLayer 方案，ND-007）；键条仅留 ControlKeyBar（可折叠，折叠时全透明只浮齿轮与展开按钮）。Shift/Ctrl 粘滞键属 8086tiny 时代设计，随组件废止。**2026-10-01 注**：应用内键盘以新形态回归（KeyboardPanel 半透明悬浮覆盖式全键盘 + blockSoftKeyboard 设置，见 ND-007）；本条仅约束 8086tiny 时代的 SoftKeyboard 六排组件与旧 AGENTS「刻意无应用内键盘」承诺，不再约束现行实现。
 
 ### [ND-D4] 专用 PC 喇叭方波 audio_output
 - **类别**: decision
