@@ -1,0 +1,144 @@
+name: Bug 反馈
+description: 反馈 NextDOS 在使用中出现的功能异常（输入、声音、显示、挂载、网络等）
+title: "[Bug] "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        感谢反馈！请尽量完整填写以下内容，信息越具体越容易定位。
+        涉及**输入**的问题请写清外设型号与连接方式；涉及**声音**的问题请补充音量与静音状态；
+        涉及**显示、挂载、网络**的问题请说明当时运行的 DOS 程序。
+
+  - type: dropdown
+    id: device-type
+    attributes:
+      label: 设备类型
+      options:
+        - 手机
+        - 平板
+        - 2in1（PC 形态）
+    validations:
+      required: true
+
+  - type: input
+    id: device-model
+    attributes:
+      label: 设备型号
+      description: 如 MatePad Pro 12、Mate 60 Pro、MateBook Pro
+      placeholder: 例：HUAWEI MatePad Pro 12
+    validations:
+      required: true
+
+  - type: input
+    id: os-version
+    attributes:
+      label: 系统版本
+      description: 设置 → 关于本机 中可查
+      placeholder: 例：HarmonyOS 5.0.1
+    validations:
+      required: true
+
+  - type: input
+    id: app-version
+    attributes:
+      label: NextDOS 应用版本
+      description: 应用内「设置」中可查，版本名或版本号均可
+      placeholder: 例：1.1.1
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: category
+    attributes:
+      label: 问题类别（可多选）
+      options:
+        - label: 启动 / 闪退 / 黑屏
+        - label: 触摸与鼠标（点按、拖拽、滚轮）
+        - label: 触摸板（外接触控板或键盘附带触摸板）
+        - label: 物理键盘（外接键盘、平板/2in1 键盘盖）
+        - label: 应用内键盘 / 系统输入法
+        - label: 声音
+        - label: 显示与渲染（花屏、比例、分辨率）
+        - label: 挂载与文件
+        - label: 网络
+        - label: 其他
+
+  - type: textarea
+    id: repro-steps
+    attributes:
+      label: 复现步骤
+      description: 从打开应用开始，按步骤描述操作过程
+      placeholder: |
+        1.
+        2.
+        3.
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected-behavior
+    attributes:
+      label: 期望行为
+      placeholder: 正常情况下应该发生什么
+
+  - type: textarea
+    id: actual-behavior
+    attributes:
+      label: 实际行为
+      description: 与期望不符的具体表现
+      placeholder: 实际发生了什么
+
+  - type: dropdown
+    id: frequency
+    attributes:
+      label: 复现频率
+      options:
+        - 必现
+        - 偶现（多数情况）
+        - 偶现（少数情况）
+        - 仅出现一次
+
+  - type: input
+    id: dos-program
+    attributes:
+      label: 涉及的 DOS 程序或游戏
+      description: 与该问题相关的程序名；纯 DOS 提示符下即可复现可不填
+      placeholder: 例：三国志 I、Windows 3.x、纯 DOS 命令行
+
+  - type: textarea
+    id: peripherals
+    attributes:
+      label: 外接配件与连接方式
+      description: 键盘、鼠标、触摸板、手柄的型号与连接方式（蓝牙、有线、磁吸键盘盖等）；键盘是否自带触摸板
+      placeholder: 例：华为智能磁吸键盘（含触摸板），蓝牙连接
+
+  - type: textarea
+    id: environment
+    attributes:
+      label: 环境与设置补充
+      description: |
+        声音类：系统媒体音量、应用设置是否开启静音、其他应用是否正常出声；
+        输入类：是否处于投屏或多屏协同、应用内键盘是否展开、是否开启「禁用系统软键盘」；
+        显示类：横竖屏。
+      placeholder: 不适用的项可写「不适用」
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: 日志与截图
+      description: |
+        可粘贴 hilog 中 TAG 为 NextDOS 的关键日志（hdc shell hilog | grep NextDOS）；
+        声音类问题可附 dosbox.log 中「OHOS: audio stats」一行；支持直接粘贴图片和文本。
+      render: markdown
+
+  - type: checkboxes
+    id: self-check
+    attributes:
+      label: 反馈前自查
+      description: 便于排除环境因素，不适用的项可跳过
+      options:
+        - label: 已更新到最新版本并复现该问题
+        - label: 已搜索既有 issue，未发现重复
+        - label: （输入类）未处于投屏或多屏协同状态
+        - label: （声音类）其他应用出声正常，应用内未开启静音
+        - label: 愿意在需要时补充日志或录屏
