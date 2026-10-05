@@ -32,8 +32,8 @@ struct Index {
   @State folderMounted: boolean = false;
   @State mountBusy: boolean = false;
   // In-app full keyboard (touch devices): replaces the bottom overlay and
-  // docks below the canvas, which shrinks while the engine refits its draw
-  // rect — the same resize the system soft keyboard causes under RESIZE.
+  // floats translucently over the canvas (last child of the Stack), so the
+  // canvas keeps its size and no draw-rect refit happens while it is open.
   @State keyboardVisible: boolean = false;
   // settings.blockSoftKeyboard: when on, canvas taps never mount the IME
   // field, so the system soft keyboard stays down and text input goes
@@ -654,8 +654,9 @@ struct Index {
    * the expanded strip paints translucent black so the DOS screen stays
    * readable underneath while the keys render full-brightness white, the
    * collapsed corner is fully transparent. Both states carry the keyboard
-   * toggle; the panel itself is docked below the canvas (see build), not
-   * here, so it never covers the DOS picture.
+   * toggle; the panel itself is a later child of the same bottom-anchored
+   * Stack (see build), floating over the canvas instead of docking below it,
+   * so showing it never resizes the DOS picture.
    */
   @Builder
   controlOverlay() {
