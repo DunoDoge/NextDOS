@@ -1,4 +1,4 @@
-import { bundleManager, common } from '@kit.AbilityKit';
+import { bundleManager, common, Want } from '@kit.AbilityKit';
 import { BusinessError } from '@kit.BasicServicesKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { DosEmulator } from '../model/DosEmulator';
@@ -11,6 +11,10 @@ const REPO_URL = 'https://github.com/DunoDoge/NextDOS';
 // the standardized first-launch dialog.
 const PRIVACY_URL: string =
   'https://agreement-drcn.hispace.dbankcloud.cn/index.html?lang=zh&agreementId=2032214202961163328';
+// Feedback contact shown in the 关于 group. Opened through the mailto Want
+// (action sendToData) so the system mail app lands directly on its compose
+// screen; startAbilityByType would show an app-picker panel instead.
+const FEEDBACK_EMAIL = 'pinowcao@outlook.com';
 
 /**
  * Settings content hosted inside the half-modal sheet bound in Index. 2in1 and
@@ -25,8 +29,9 @@ const PRIVACY_URL: string =
  * and write back through the AppSettings setters; CPU speed and mute are
  * engine boot-time settings, so changing them only regenerates the config —
  * the 重启模拟器 row applies them. The repository and 隐私政策 rows hand
- * their URLs to the system browser via openLink. 开源许可 opens the full
- * license sub-page as a
+ * their URLs to the system browser via openLink. The 反馈邮箱 row opens the
+ * system mail app's compose screen through a mailto Want. 开源许可 opens the
+ * full license sub-page as a
  * full modal stacked on top of this sheet (bindContentCover; a later modal
  * covers an open sheet, sheet-in-sheet has no documented guarantee). isShow
  * flags are one-way into the modal APIs: both this bindContentCover and
@@ -79,6 +84,20 @@ export struct SettingsSheet {
     const context = getContext(this) as common.UIAbilityContext;
     context.openLink(PRIVACY_URL).catch((error: BusinessError) => {
       hilog.error(0x0000, TAG, 'open privacy policy link failed: %{public}s', error.message);
+    });
+  }
+
+  /** Header values in a mailto URI must be percent-encoded or the mail app
+   * silently drops them (doc: 拉起邮件类应用（mailto方式）). */
+  private openFeedbackEmail(): void {
+    const context = getContext(this) as common.UIAbilityContext;
+    const want: Want = {
+      action: 'ohos.want.action.sendToData',
+      uri: `mailto:${FEEDBACK_EMAIL}?subject=${encodeURIComponent('NextDOS 反馈')}`
+    };
+    context.startAbility(want).catch((error: BusinessError) => {
+      hilog.error(0x0000, TAG, 'open feedback email failed: %{public}s', error.message);
+      this.toast('未能打开邮件应用，请手动写信至 ' + FEEDBACK_EMAIL);
     });
   }
 
@@ -639,6 +658,33 @@ export struct SettingsSheet {
       .hoverEffect(HoverEffect.Highlight)
       .onClick(() => {
         this.openRepository();
+      })
+
+      Divider()
+        .strokeWidth(0.5)
+        .color('#FFFFFF14')
+        .margin({ left: 16 })
+
+      Row() {
+        Text('反馈邮箱')
+          .fontSize(16)
+          .fontColor('#FFFFFF')
+          .layoutWeight(1)
+        Text(FEEDBACK_EMAIL)
+          .fontSize(14)
+          .fontColor('#DDDDDD')
+          .maxLines(1)
+        SymbolGlyph($r('sys.symbol.arrow_up_right'))
+          .fontSize(13)
+          .fontColor(['#8A8A92'])
+          .margin({ left: 4 })
+      }
+      .width('100%')
+      .height(48)
+      .padding({ left: 16, right: 16 })
+      .hoverEffect(HoverEffect.Highlight)
+      .onClick(() => {
+        this.openFeedbackEmail();
       })
 
       Divider()
