@@ -60,6 +60,9 @@ export class AppSettings {
   static blockSoftKeyboard: boolean = false;
   /** Last folder successfully mounted as C: ('' = none). */
   static lastMountDir: string = '';
+  /** Sandbox slot path of the last staged CD image ('' = none); the D:
+   * [autoexec] mount line is written only while it is non-empty. */
+  static lastCdImage: string = '';
   /** [ethernet] ne2000: emulated NE2000 card on slirp user-mode NAT (boot-time). */
   static netNe2000: boolean = false;
   /** [ethernet] tcp_port_forwards: raw engine rule text (host:guest, ranges). */
@@ -128,6 +131,10 @@ export class AppSettings {
       if (typeof lastDir === 'string') {
         AppSettings.lastMountDir = lastDir;
       }
+      const lastCd: preferences.ValueType = store.getSync('lastCdImage', AppSettings.lastCdImage);
+      if (typeof lastCd === 'string') {
+        AppSettings.lastCdImage = lastCd;
+      }
       const netNe2000: preferences.ValueType = store.getSync('netNe2000', AppSettings.netNe2000);
       if (typeof netNe2000 === 'boolean') {
         AppSettings.netNe2000 = netNe2000;
@@ -195,6 +202,12 @@ export class AppSettings {
     AppSettings.lastMountDir = value;
     AppStorage.setOrCreate('settings.lastMountDir', value);
     AppSettings.persist('lastMountDir', value);
+  }
+
+  static setLastCdImage(value: string): void {
+    AppSettings.lastCdImage = value;
+    AppStorage.setOrCreate('settings.lastCdImage', value);
+    AppSettings.persist('lastCdImage', value);
   }
 
   static setNetNe2000(value: boolean): void {
@@ -335,6 +348,7 @@ export class AppSettings {
     AppStorage.setOrCreate('settings.autoMount', AppSettings.autoMount);
     AppStorage.setOrCreate('settings.blockSoftKeyboard', AppSettings.blockSoftKeyboard);
     AppStorage.setOrCreate('settings.lastMountDir', AppSettings.lastMountDir);
+    AppStorage.setOrCreate('settings.lastCdImage', AppSettings.lastCdImage);
     AppStorage.setOrCreate('settings.netNe2000', AppSettings.netNe2000);
     AppStorage.setOrCreate('settings.netTcpForwards', AppSettings.netTcpForwards);
     AppStorage.setOrCreate('settings.netUdpForwards', AppSettings.netUdpForwards);

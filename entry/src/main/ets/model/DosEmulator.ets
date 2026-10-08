@@ -6,6 +6,7 @@ import { BusinessError } from '@kit.BasicServicesKit';
 import { fileIo as fs } from '@kit.CoreFileKit';
 import { KeyCode } from '@kit.InputKit';
 import { AppSettings, NetworkParams } from './AppSettings';
+import { CdImage, CdStaged } from './CdImage';
 import { MountFolder } from './MountFolder';
 
 const TAG: string = 'NextDOS';
@@ -23,6 +24,9 @@ export class DosEmulator {
 
   private confPath: string = '';
   private mountedFolder: string = '';
+  // Sandbox slot path staged by CdImage ('' = no CD); drives the D: line
+  // in [autoexec] and the running-guest mount/unmount injections.
+  private cdImagePath: string = '';
   private timerId: number = -1;
   private lastSeq: number = 0;
   private running: boolean = false;
@@ -49,6 +53,16 @@ export class DosEmulator {
       } catch (error) {
         const err = error as BusinessError;
         hilog.warn(0x0000, TAG, 'auto-mount skipped, folder gone: %{public}s', err.message);
+      }
+    }
+    if (AppSettings.lastCdImage !== '') {
+      try {
+        CdImage.verifySlot(AppSettings.lastCdImage);
+        this.cdImagePath = AppSettings.lastCdImage;
+      } catch (error) {
+        const err = error as BusinessError;
+        AppSettings.setLastCdImage('');
+        hilog.warn(0x0000, TAG, 'cd slot gone, persisted entry cleared: %{public}s', err.message);
       }
     }
     this.writeConfig();
@@ -123,6 +137,12 @@ export class DosEmulator {
       conf += 'mount c ' + this.mountedFolder + '\n';
       conf += 'c:\n';
     }
+    if (this.cdImagePath !== '') {
+      // The unified MOUNT program, not the imgmount alias: imgmount prints a
+      // deprecation warning on every boot. The explicit -t iso keeps .img
+      // files from being geometry-sniffed as floppy/hdd images.
+      conf += 'mount d ' + this.cdImagePath + ' -t iso\n';
+    }
     conf += '\n';
     const file = fs.openSync(this.confPath, fs.OpenMode.READ_WRITE | fs.OpenMode.CREATE | fs.OpenMode.TRUNC);
     fs.writeSync(file.fd, conf);
@@ -185,6 +205,60 @@ export class DosEmulator {
 
   isFolderMounted(): boolean {
     return this.mountedFolder !== '';
+  }
+
+  /**
+   * Mounts the staged CD image (CdImage slot) as the guest D: drive. On a
+   * not-yet-running engine the [autoexec] line does the mount at boot;
+   * while running, the `mount d ... -t iso` line is typed into the guest.
+   * No dedicated NAPI export: the mount is config + injection, like the
+   * C: folder mount. Failures roll the persisted state back, so the
+   * caller's slot cleanup never leaves lastCdImage pointing at deleted
+   * files.
+   */
+  async mountCd(staged: CdStaged): Promise<void> {
+    const wasRunning: boolean = this.running;
+    this.cdImagePath = staged.path;
+    AppSettings.setLastCdImage(staged.path);
+    try {
+      this.writeConfig();
+      if (!wasRunning) {
+        this.start();
+        return;
+      }
+      await this.typeIntoGuest('mount d ' + staged.path + ' -t iso\r');
+    } catch (error) {
+      // The caller wipes the slot files on failure; roll the persisted
+      // state back first or lastCdImage would point at deleted files. A
+      // config write that failed midway also leaves a truncated file, so
+      // regenerate it without the D: line while at it.
+      const err = error as BusinessError;
+      this.cdImagePath = '';
+      AppSettings.setLastCdImage('');
+      this.writeConfig();
+      // arkts-limited-throw: rethrowing the BusinessError cast directly is
+      // rejected; the caller only reads .message, so wrap it in a fresh Error.
+      throw new Error(err.message);
+    }
+  }
+
+  /** Unmounts D: by typing `mount -u d` into the running guest and clears
+   * the persisted slot entry — the caller deletes the slot files only
+   * after this resolves, so the files never vanish before the unmount
+   * keystrokes are injected. */
+  async unmountCd(): Promise<void> {
+    const wasRunning: boolean = this.running;
+    this.cdImagePath = '';
+    AppSettings.setLastCdImage('');
+    this.writeConfig();
+    if (!wasRunning) {
+      return;
+    }
+    await this.typeIntoGuest('mount -u d\r');
+  }
+
+  isCdMounted(): boolean {
+    return this.cdImagePath !== '';
   }
 
   isRunning(): boolean {

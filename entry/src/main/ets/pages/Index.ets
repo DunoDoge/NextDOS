@@ -6,6 +6,7 @@ import { KeyCode } from '@kit.InputKit';
 import { privacyManager } from '@kit.AppGalleryKit';
 import { DosEmulator } from '../model/DosEmulator';
 import { DosKeyMap } from '../model/DosKeyMap';
+import { CdImage, CdPick, CdStaged } from '../model/CdImage';
 import { MountFolder } from '../model/MountFolder';
 import { EmulatorScreen } from '../view/EmulatorScreen';
 import { ControlKeyBar, controlCornerButton } from '../view/ControlKeyBar';
@@ -31,6 +32,12 @@ struct Index {
   @State showSettings: boolean = false;
   @State folderMounted: boolean = false;
   @State mountBusy: boolean = false;
+  // CD slot state, mirroring folderMounted/mountBusy: cdMounted drives both
+  // the quick-menu row and the 2in1 title-bar glyph; cdBusy guards re-entry
+  // while the picker/copy/injection chain is in flight (independent of
+  // mountBusy: the C:/D: injections share one serialized type queue).
+  @State cdMounted: boolean = false;
+  @State cdBusy: boolean = false;
   // In-app full keyboard (touch devices): replaces the bottom overlay and
   // floats translucently over the canvas (last child of the Stack), so the
   // canvas keeps its size and no draw-rect refit happens while it is open.
@@ -102,6 +109,7 @@ struct Index {
     this.booted = true;
     // Auto-mount may have restored the last session's folder via [autoexec].
     this.folderMounted = this.emu.isFolderMounted();
+    this.cdMounted = this.emu.isCdMounted();
     hilog.info(0x0000, TAG, 'NextDOS booted');
   }
 
@@ -374,6 +382,78 @@ struct Index {
     }
   }
 
+  /**
+   * CD quick entry: picks + stages an image into the sandbox slot, then
+   * mounts it as guest D:. The engine is the final judge of the image, so
+   * the toasts stay honest: .iso/.bin/.img with a sniffed ISO9660 PVD say
+   * mounted, a missed sniff says format-uncertain, and cue sheets always
+   * use the neutral wording (their engine-side failures, e.g. bad TRACK
+   * syntax, are only visible inside the guest). cdMounted has two explicit
+   * write-back points (mount/unmount), like folderMounted — missing one
+   * would deadlock the toggle and re-mount onto an already-mounted D:.
+   */
+  private async handleCdButton(): Promise<void> {
+    if (!this.booted) {
+      this.showToast('模拟器启动中，请稍候');
+      return;
+    }
+    if (this.cdBusy) {
+      return;
+    }
+    this.cdBusy = true;
+    try {
+      if (this.cdMounted) {
+        // Unmount keystrokes first, then wipe the slot: the staged files
+        // must outlive the `mount -u d` injection (unmountCd awaits it).
+        await this.emu.unmountCd();
+        this.cdMounted = false;
+        try {
+          CdImage.clearSlot(getContext(this) as common.UIAbilityContext);
+        } catch (error) {
+          const err = error as BusinessError;
+          hilog.error(0x0000, TAG, 'clear cd slot failed: %{public}s', err.message);
+        }
+        this.showToast('D: 已卸载');
+      } else {
+        const ctx = getContext(this) as common.UIAbilityContext;
+        const picked: CdPick | null = await CdImage.pick(ctx);
+        if (picked === null) {
+          // Picker cancelled: nothing staged, and no copy toast was shown.
+          return;
+        }
+        this.showToast('正在复制镜像，请稍候…');
+        const staged: CdStaged = await CdImage.stage(picked, ctx);
+        await this.emu.mountCd(staged);
+        this.cdMounted = true;
+        if (staged.isCue) {
+          this.showToast('已尝试挂载 ' + staged.name + '，请在 DOS 中确认 D:（cue 音轨由 guest 加载）');
+        } else if (staged.pvdOk) {
+          this.showToast('D: 已挂载 ' + staged.name);
+        } else {
+          this.showToast('镜像格式存疑，已尝试挂载，请在 DOS 中确认 D:');
+        }
+      }
+    } catch (error) {
+      const err = error as BusinessError;
+      // A failed stage must not strand half-copied track files (hundreds of
+      // MB) in the slot: while cdMounted is false nothing is mounted, so a
+      // best-effort wipe before reporting is always safe, and mountCd has
+      // rolled its persistence back, so nothing points at the wiped files.
+      if (!this.cdMounted) {
+        try {
+          CdImage.clearSlot(getContext(this) as common.UIAbilityContext);
+        } catch (cleanError) {
+          const cleanErr = cleanError as BusinessError;
+          hilog.error(0x0000, TAG, 'cd slot cleanup failed: %{public}s', cleanErr.message);
+        }
+      }
+      this.showToast('光盘挂载失败: ' + err.message);
+      hilog.error(0x0000, TAG, 'cd mount failed: %{public}s', err.message);
+    } finally {
+      this.cdBusy = false;
+    }
+  }
+
   private showToast(message: string): void {
     this.getUIContext().getPromptAction().showToast({ message: message });
   }
@@ -497,6 +577,23 @@ struct Index {
           this.handleMountButton();
         })
 
+        // opticaldisc has no fill variant, so the mounted state rides on
+        // minus_circle_fill instead — a pure-glyph title bar would
+        // otherwise give no hint whether D: is mounted.
+        Column() {
+          SymbolGlyph(this.cdMounted ? $r('sys.symbol.minus_circle_fill') : $r('sys.symbol.opticaldisc'))
+            .fontSize(18)
+            .fontColor(['#FFFFFF'])
+        }
+        .width(36)
+        .height(30)
+        .justifyContent(FlexAlign.Center)
+        .borderRadius(6)
+        .hoverEffect(HoverEffect.Highlight)
+        .onClick(() => {
+          this.handleCdButton();
+        })
+
         // Rightmost app symbol: the settings entry, opens the shared
         // half-modal settings sheet.
         Column() {
@@ -579,6 +676,23 @@ struct Index {
       .height(44)
       .onClick(() => {
         this.handleMountButton();
+      })
+
+      Divider().color('#2A2A2E')
+
+      Row({ space: 12 }) {
+        SymbolGlyph(this.cdMounted ? $r('sys.symbol.minus_circle_fill') : $r('sys.symbol.opticaldisc'))
+          .fontSize(22)
+          .fontColor(['#DDDDDD'])
+        Text(this.cdMounted ? '卸载光盘' : '挂载光盘')
+          .fontSize(16)
+          .fontColor('#FFFFFF')
+          .layoutWeight(1)
+      }
+      .width('100%')
+      .height(44)
+      .onClick(() => {
+        this.handleCdButton();
       })
 
       Divider().color('#2A2A2E')
