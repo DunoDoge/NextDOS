@@ -53,12 +53,14 @@ module.exports = {
     'footer-leading-blank': [0],
     // scope 列表（新增 scope 需同步本清单与 AGENTS.md）；NextDOS 架构：
     // view=ArkTS UI，model=ArkTS 非 UI 层，engine=C++ 原生层与 DOSBox 引擎，
-    // build=工程配置/权限/依赖，docs=文档，resources=图标等应用资源
+    // build=工程配置/权限/依赖，docs=一般文档（prd、引擎内幕），
+    // wiki=docs/wiki 代码维基，readme=根 README，agents=AGENTS.md 与代理记忆，
+    // resources=图标等应用资源
     'scope-enum': [
       1,
       'always',
       [
-        'view', 'model', 'engine', 'build', 'docs', 'resources',
+        'view', 'model', 'engine', 'build', 'docs', 'wiki', 'readme', 'agents', 'resources',
       ],
     ],
     'subject-chinese': [2, 'always'],
