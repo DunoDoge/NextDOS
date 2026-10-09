@@ -80,10 +80,17 @@ boot()
 
 | 方法 | 说明 |
 | --- | --- |
+| `injectGuestOwnedKey` | `onKeyPreIme` 阶段拦截 guest 独占键并消费事件：`DosKeyMap.isTraversalKey`（Tab/方向键）在根节点与 IME 字段都拦截，`isActivationKey`（回车族）仅根节点拦截（字段聚焦时回车必须走内容差分，与软键盘回车行为一致） |
 | `handleKey` | 根节点 `onKeyEvent`；IME 聚焦时跳过以避免与内容差分重复注入；经 `DosKeyMap.isInjectable` 过滤后注入 |
 | `handleImeChange` | IME 字段内容差分：删除→退格、插入→`typeIntoGuest`（超 32 字符的删除视为全选清除，直接吞掉） |
 | `handleImeKeyEvent` | IME 聚焦期间到达的硬件键事件；文本类键交给差分，其余走直接注入 |
 | `onPageHide` / `onPageShow` | 切后台自动暂停、返回自动恢复（`autoPaused` 标记） |
+
+**为什么需要 `onKeyPreIme` 拦截**：ArkUI 键事件分发的最后阶段里，走焦（Tab/方向键遍历可聚焦组件）与按钮激活
+（回车/空格激活聚焦按钮）与 `onKeyEvent` 并存。不拦截时，Tab 会在底部控制栏的齿轮/键盘/收起按钮之间循环走焦，
+回车会直接激活当前聚焦的 UI 按钮，guest 永远收不到这些键。`onKeyPreIme` 返回 `true` 表示事件已消费，
+输入法、`onKeyEventDispatch`、`onKeyEvent` 与走焦全部被拦截，因此在这里注入并消费可保证 guest 独占这些键。
+根节点回调带 `imeFocused` 守卫，避免字段聚焦时事件冒泡造成双重注入。
 
 ### 2.4 挂载逻辑
 
@@ -100,10 +107,15 @@ boot()
 - `gearMenuButton()`：`bindPopup` 锚点，采用单向 `showMenu` + `onStateChange` 写回（遮罩关闭必须回写 `false`）。
 - `controlOverlay()`：底部悬浮控制层（展开=控制栏，收起=角落齿轮/键盘/展开按钮）；
   用 `HitTestMode.None` 让空白区域触摸落到画面（DOS 鼠标）上。
-- `imeLayer()`：覆盖全屏的**不可见** `TextArea`，点按原生聚焦即唤起系统输入法，
-  `HitTestMode.Transparent` 让同一次触摸也到达 `EmulatorScreen`。
-- `build()`：桌面加标题行；否则 `Stack` 叠加 `EmulatorScreen` + `imeLayer`/`controlOverlay`/`KeyboardPanel`；
-  根节点 `bindSheet` 挂载设置面板。
+- `imeLayer()`：覆盖全屏的**不可见** `TextArea`，位于 `Stack` 中 `EmulatorScreen` **之下**。
+  点按原生聚焦即唤起系统输入法；画布带 `HitTestMode.Transparent`，让同一次触摸也到达
+  `EmulatorScreen`。层级顺序是硬约束：鼠标/轴事件只派发给最顶层的命中节点，
+  字段若在画布之上会吞掉全部触摸板移动与点击（guest 光标不动），而手指触摸会沿命中链
+  分发所以照常工作——这类"手指正常、触摸板全废"的差异正是该顺序的存在原因。
+- `build()`：桌面加标题行；否则 `Stack` 按 `imeLayer` → `EmulatorScreen` → `controlOverlay`/`KeyboardPanel`
+  顺序叠加；根节点 `bindSheet` 挂载设置面板。底部控制栏的齿轮/键盘/收起等触屏专用按钮带
+  `tabIndex(-1)`：可点击、可被辅助焦点选中，但不参与 Tab 走焦，硬件键盘因此不会把焦点
+  停在 UI 按钮上吞掉 guest 的按键。
 
 ### 2.6 设备差异
 
@@ -137,6 +149,9 @@ boot()
   | 滚轮/触控板轴事件 | `onAxisEvent`，15°/格 |
 
 - **物理鼠标**：`handleMouse`（Hover/Move/Press/Release），相对增量按密度换算为物理像素。
+  画布带 `hitTestBehavior(HitTestMode.Transparent)`：不阻塞下方 `imeLayer` 的触摸命中
+  （点按画面仍能唤起软键盘），同时作为最顶层命中节点独享鼠标/轴事件（触摸板移动、
+  点击、双指滚动 therefore 全部到达 `onMouse`/`onAxisEvent`）。
 - **画布尺寸**：`onAreaChange` 上报 `setCanvasSize()`，并做一次 100ms 后的延迟重绘以拾取异步刷新的 draw rect。
 
 ### 3.2 `ControlKeyBar`（[ControlKeyBar.ets](../../entry/src/main/ets/view/ControlKeyBar.ets)）
