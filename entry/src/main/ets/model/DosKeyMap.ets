@@ -75,6 +75,47 @@ export class DosKeyMap {
   }
 
   /**
+   * Keys the ArkUI focus system consumes before any component callback
+   * sees them: Tab and the direction keys drive focus traversal across
+   * every focusable node on the page. A DOS guest owns these keys (Tab
+   * completes the command line, the direction keys recall history and
+   * steer games), so they are intercepted at the onKeyPreIme stage —
+   * before traversal — and injected directly. The IME field intercepts
+   * the same set: with the invisible field focused the framework would
+   * otherwise move the caret or the focus away and the guest would never
+   * see the key.
+   */
+  static isTraversalKey(keyCode: number): boolean {
+    switch (keyCode) {
+      case KeyCode.KEYCODE_TAB:
+      case KeyCode.KEYCODE_DPAD_UP:
+      case KeyCode.KEYCODE_DPAD_DOWN:
+      case KeyCode.KEYCODE_DPAD_LEFT:
+      case KeyCode.KEYCODE_DPAD_RIGHT:
+        return true;
+      default:
+        return false;
+    }
+  }
+
+  /**
+   * Keys that activate a focused UI control instead of reaching the
+   * guest. Only the page root intercepts these: while the IME field is
+   * focused, Enter must stay on the content-diff path (the field commits
+   * a newline, the diff injects it) so the soft keyboard's Enter and the
+   * hardware Enter behave identically.
+   */
+  static isActivationKey(keyCode: number): boolean {
+    switch (keyCode) {
+      case KeyCode.KEYCODE_ENTER:
+      case KeyCode.KEYCODE_NUMPAD_ENTER:
+        return true;
+      default:
+        return false;
+    }
+  }
+
+  /**
    * Keys an edit box consumes itself when it holds focus (text insertion,
    * Enter, backspace, Tab, CapsLock). While the IME input field is focused
    * these reach the guest through the field's content diff, never by direct

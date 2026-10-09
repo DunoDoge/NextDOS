@@ -282,6 +282,33 @@ struct Index {
   }
 
   /**
+   * Guest-owned keys are injected at the onKeyPreIme stage and the event
+   * is consumed, so the framework's focus traversal and button activation
+   * never see them: Tab and the direction keys otherwise walk the focusable
+   * corner chrome (the gear, the keyboard and the collapse buttons), and
+   * Enter otherwise activates whichever button holds focus — the guest
+   * would lose Tab completion, history recall and command execution with
+   * no error anywhere. The IME field passes allowActivation=false so its
+   * Enter stays on the content-diff path (soft keyboard and hardware
+   * Enter then behave identically); the root has no diff path, so it
+   * consumes the Enter family too.
+   */
+  private injectGuestOwnedKey(event: KeyEvent, allowActivation: boolean): boolean {
+    if (!this.booted) {
+      return false;
+    }
+    if (event.type !== KeyType.Down && event.type !== KeyType.Up) {
+      return false;
+    }
+    if (!DosKeyMap.isTraversalKey(event.keyCode) &&
+      !(allowActivation && DosKeyMap.isActivationKey(event.keyCode))) {
+      return false;
+    }
+    this.emu.injectKey(event.keyCode, event.type === KeyType.Down);
+    return true;
+  }
+
+  /**
    * Forwards IME field content changes to the guest as keystrokes. System
    * soft keyboards do not deliver key events, only committed/composing text,
    * so the old vs. new buffer content is diffed: deleted characters become
@@ -543,6 +570,7 @@ struct Index {
         .justifyContent(FlexAlign.Center)
         .borderRadius(6)
         .hoverEffect(HoverEffect.Highlight)
+        .tabIndex(-1)
         .onClick(() => {
           this.emu.togglePause();
           this.paused = this.emu.isPaused();
@@ -558,6 +586,7 @@ struct Index {
         .justifyContent(FlexAlign.Center)
         .borderRadius(6)
         .hoverEffect(HoverEffect.Highlight)
+        .tabIndex(-1)
         .onClick(() => {
           this.emu.reset();
           this.paused = false;
@@ -573,6 +602,7 @@ struct Index {
         .justifyContent(FlexAlign.Center)
         .borderRadius(6)
         .hoverEffect(HoverEffect.Highlight)
+        .tabIndex(-1)
         .onClick(() => {
           this.handleMountButton();
         })
@@ -590,6 +620,7 @@ struct Index {
         .justifyContent(FlexAlign.Center)
         .borderRadius(6)
         .hoverEffect(HoverEffect.Highlight)
+        .tabIndex(-1)
         .onClick(() => {
           this.handleCdButton();
         })
@@ -606,6 +637,7 @@ struct Index {
         .justifyContent(FlexAlign.Center)
         .borderRadius(6)
         .hoverEffect(HoverEffect.Highlight)
+        .tabIndex(-1)
         .onClick(() => {
           this.openSettings();
         })
@@ -736,6 +768,10 @@ struct Index {
     .width('100%')
     .height(40)
     .justifyContent(FlexAlign.Center)
+    // Touch-only chrome: reachable by tap and by assistive focus, but not
+    // by Tab traversal, so a hardware keyboard never parks focus here and
+    // swallows guest keys (Tab/Enter would activate the button instead).
+    .tabIndex(-1)
     .onClick(() => {
       this.showMenu = !this.showMenu;
     })
@@ -791,6 +827,7 @@ struct Index {
             .width('100%')
             .height(40)
             .justifyContent(FlexAlign.Center)
+            .tabIndex(-1)
             .onClick(() => {
               this.toggleKeyboard();
             })
@@ -803,6 +840,7 @@ struct Index {
             .width('100%')
             .height(40)
             .justifyContent(FlexAlign.Center)
+            .tabIndex(-1)
             .onClick(() => {
               this.barExpanded = false;
             })
@@ -850,16 +888,20 @@ struct Index {
   }
 
   /**
-   * Touch-device IME plumbing: a full-screen INVISIBLE TextArea floating over
-   * the canvas. A tap anywhere on the DOS screen hits it like a normal input
-   * box (focusOnTouch attaches the system input method and pops up the soft
-   * keyboard), while HitTestMode.Transparent lets the same touch also reach
-   * the EmulatorScreen underneath for mouse injection. Its content changes
-   * are diffed into guest keystrokes (handleImeChange). Programmatic
-   * requestFocus is deliberately NOT used: it focuses the box but does not
-   * attach it to the input method service, so the keyboard never rises.
-   * Unmounted entirely while the in-app keyboard is up or when the
-   * blockSoftKeyboard setting opts out of the system input method.
+   * Touch-device IME plumbing: a full-screen INVISIBLE TextArea BELOW the
+   * EmulatorScreen canvas in the Stack. A tap anywhere on the DOS screen
+   * hits it like a normal input box (focusOnTouch attaches the system input
+   * method and pops up the soft keyboard), while the canvas above carries
+   * HitTestMode.Transparent so the same touch also reaches the EmulatorScreen
+   * for mouse injection. It must stay below the canvas: mouse events are
+   * dispatched to the topmost hit node only, so a field on top would swallow
+   * every touchpad move and click (the guest cursor would never move) while
+   * finger taps — which fan out across the hit chain — kept working. Its
+   * content changes are diffed into guest keystrokes (handleImeChange).
+   * Programmatic requestFocus is deliberately NOT used: it focuses the box
+   * but does not attach it to the input method service, so the keyboard
+   * never rises. Unmounted entirely while the in-app keyboard is up or when
+   * the blockSoftKeyboard setting opts out of the system input method.
    */
   @Builder
   imeLayer() {
@@ -879,6 +921,11 @@ struct Index {
       .onBlur(() => {
         this.imeFocused = false;
       })
+      // Tab and the direction keys must reach the guest, not the field's
+      // caret or the focus traversal; Enter stays on the IME commit path.
+      .onKeyPreIme((event: KeyEvent): boolean => {
+        return this.injectGuestOwnedKey(event, false);
+      })
       .onKeyEvent((event: KeyEvent) => {
         this.handleImeKeyEvent(event);
       })
@@ -897,13 +944,17 @@ struct Index {
       // KeyboardPanel for the see-through and hit-test contract). While the
       // panel is up (or the blockSoftKeyboard setting is on) the IME field
       // stays unmounted so a canvas tap can never summon the system
-      // keyboard over the panel.
+      // keyboard over the panel. The IME field is the FIRST child on
+      // purpose: it sits below the canvas, which keeps touchpad/mouse
+      // events on the canvas (see imeLayer).
       Stack({ alignContent: Alignment.Bottom }) {
-        EmulatorScreen({ emu: this.emu })
         if (!IS_DESKTOP) {
           if (!this.blockSoftKeyboard && !this.keyboardVisible) {
             this.imeLayer()
           }
+        }
+        EmulatorScreen({ emu: this.emu })
+        if (!IS_DESKTOP) {
           if (!this.keyboardVisible) {
             this.controlOverlay()
           }
@@ -950,6 +1001,18 @@ struct Index {
       }
     })
     .focusable(true)
+    // Guest-owned keys (Tab, direction keys, Enter family) are consumed here
+    // before the framework's focus traversal or button activation can eat
+    // them; everything else falls through to handleKey below. Fires only
+    // while the page root holds focus — while the IME field is focused the
+    // field's own onKeyPreIme runs instead, and this guard keeps a bubbled
+    // event from injecting the same key twice.
+    .onKeyPreIme((event: KeyEvent): boolean => {
+      if (this.imeFocused) {
+        return false;
+      }
+      return this.injectGuestOwnedKey(event, true);
+    })
     // An explicit defaultFocus(true) makes the initial page-focus descent land
     // on the first focusable child — the invisible IME TextArea on touch
     // devices — and the soft keyboard then rises at every launch. 2in1 has no
