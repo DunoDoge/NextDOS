@@ -1,0 +1,184 @@
+# ArkTS 表现层
+
+本篇覆盖 Ability 窗口配置（`entryability/`）、唯一页面 `Index`（`pages/`）以及可复用
+UI 组件（`view/`）。
+
+---
+
+## 1. 应用入口与窗口配置
+
+### 1.1 `EntryAbility`（[EntryAbility.ets](../../entry/src/main/ets/entryability/EntryAbility.ets)）
+
+`UIAbility` 子类，负责窗口级适配。`onWindowStageCreate` 中 `loadContent('pages/Index')`
+后按设备类型分派窗口策略：
+
+| 方法 | 触发条件 | 行为 |
+| --- | --- | --- |
+| `applyImmersiveMode` | phone / tablet | `setWindowLayoutFullScreen(true)` + 隐藏系统栏（`setWindowSystemBarEnable([])`），实现沉浸式全屏 |
+| `applyDesktopTitleBar` | 2in1 | 隐藏系统标题栏装饰（`setWindowDecorVisible(false)`），并把窗口三键设为浅色，配合页面自绘黑色标题行 |
+| `applyNarrowScreenOrientation` | 窗口宽度 < 600 vp | 强制横屏 `LANDSCAPE`（竖屏下 DOS 画面不可用，且设置面板居中需 ≥600vp） |
+
+`onCreate` 里把颜色模式设为 `COLOR_MODE_NOT_SET`，交由系统/资源决定深浅色。
+
+### 1.2 `EntryBackupAbility`（[EntryBackupAbility.ets](../../entry/src/main/ets/entrybackupability/EntryBackupAbility.ets)）
+
+备份扩展，实现 `onBackup` / `onRestore`（当前仅记录日志）。其元数据在
+[module.json5](../../entry/src/main/module.json5) 中声明，关联 `profile/backup_config.json`。
+
+### 1.3 模块声明（[module.json5](../../entry/src/main/module.json5)）
+
+- `deviceTypes`：`phone` / `tablet` / `2in1`
+- `requestPermissions`：仅 `ohos.permission.INTERNET`（slirp NAT 打开主机 socket 需要）
+- `metadata`：`appgallery_privacy_hosted` 及隐私声明链接（AGC 标准化隐私托管）
+- `abilities`：`EntryAbility`（`exported: true`，desktop skills）
+- `extensionAbilities`：`EntryBackupAbility`
+
+---
+
+## 2. `Index` 页面（[Index.ets](../../entry/src/main/ets/pages/Index.ets)）
+
+全应用唯一的 `@Entry @Component`，是整个 UI 的编排者：负责启动引擎、隐私门禁、
+手势/键盘事件分发、菜单与各类面板的组织。
+
+### 2.1 状态字段（节选）
+
+| 字段 | 含义 |
+| --- | --- |
+| `booted` | 引擎是否已启动完成 |
+| `paused` | 当前暂停状态（由 `emu` 回读同步） |
+| `barExpanded` | 底部控制栏展开/收起 |
+| `showMenu` | 快捷菜单弹窗显示 |
+| `showSettings` | 设置面板（半模态 sheet）显示 |
+| `folderMounted` / `mountBusy` | C: 目录挂载状态与并发互斥 |
+| `cdMounted` / `cdBusy` | D: 光盘挂载状态与并发互斥 |
+| `keyboardVisible` | 应用内全键盘是否显示 |
+| `blockSoftKeyboard` | `@StorageLink('settings.blockSoftKeyboard')`，禁用系统软键盘 |
+| `imeBuffer` / `imeLastBuffer` | 不可见 IME 字段内容与差分基准 |
+| `navInsetVp` | 导航手势条避让高度（vp） |
+
+### 2.2 生命周期与启动流程
+
+```
+aboutToAppear()
+  ├─ 非桌面：setKeyboardAvoidMode(RESIZE)   // 软键盘弹出时压缩页面而非平移
+  ├─ initPrivacy()                          // 隐私门禁
+  └─ 桌面：trackTitleButtons() + loadTitleIcon()
+     非桌面：trackNavIndicator()
+
+initPrivacy()
+  ├─ 已同意 → boot()
+  └─ 未同意 → privacyManager.requestAppPrivacyConsent()
+        ├─ 同意 → boot()
+        ├─ 拒绝 → toast + terminateSelf()
+        └─ 服务不可用（模拟器）→ boot()（容错）
+
+boot()
+  └─ emu.bootstrap(ctx) → emu.start() → 回读 folderMounted / cdMounted
+```
+
+### 2.3 输入事件处理
+
+| 方法 | 说明 |
+| --- | --- |
+| `handleKey` | 根节点 `onKeyEvent`；IME 聚焦时跳过以避免与内容差分重复注入；经 `DosKeyMap.isInjectable` 过滤后注入 |
+| `handleImeChange` | IME 字段内容差分：删除→退格、插入→`typeIntoGuest`（超 32 字符的删除视为全选清除，直接吞掉） |
+| `handleImeKeyEvent` | IME 聚焦期间到达的硬件键事件；文本类键交给差分，其余走直接注入 |
+| `onPageHide` / `onPageShow` | 切后台自动暂停、返回自动恢复（`autoPaused` 标记） |
+
+### 2.4 挂载逻辑
+
+| 方法 | 说明 |
+| --- | --- |
+| `handleMountButton` | 已挂载→`unmountFolder`；否则经 `MountFolder.prepareMountDir` 取下载目录→校验→`mountFolder` |
+| `handleCdButton` | 已挂载→`unmountCd` 后清槽；否则 `CdImage.pick` → `CdImage.stage` → `emu.mountCd`；失败时回滚并清理半拷贝文件 |
+
+### 2.5 布局与关键 `@Builder`
+
+- `desktopTitleBar()`：2in1 自绘标题行（图标 + 名称 + 右侧符号按钮：暂停/重启/挂载目录/挂载光盘/设置），
+  右侧留出系统三键宽度（`threeButtonWidth`）。
+- `quickMenu()`：触屏设备右上角齿轮的快捷菜单（暂停/继续、重启、挂载/卸载目录、挂载/卸载光盘、设置）。
+- `gearMenuButton()`：`bindPopup` 锚点，采用单向 `showMenu` + `onStateChange` 写回（遮罩关闭必须回写 `false`）。
+- `controlOverlay()`：底部悬浮控制层（展开=控制栏，收起=角落齿轮/键盘/展开按钮）；
+  用 `HitTestMode.None` 让空白区域触摸落到画面（DOS 鼠标）上。
+- `imeLayer()`：覆盖全屏的**不可见** `TextArea`，点按原生聚焦即唤起系统输入法，
+  `HitTestMode.Transparent` 让同一次触摸也到达 `EmulatorScreen`。
+- `build()`：桌面加标题行；否则 `Stack` 叠加 `EmulatorScreen` + `imeLayer`/`controlOverlay`/`KeyboardPanel`；
+  根节点 `bindSheet` 挂载设置面板。
+
+### 2.6 设备差异
+
+- 常量 `IS_DESKTOP = deviceInfo.deviceType === '2in1'` 决定：是否显示标题行、
+  是否挂载 `imeLayer` 与 `controlOverlay`/`KeyboardPanel`、页面的 `defaultFocus`。
+- 触屏设备底部叠加层用 `Math.max(navInsetVp, 28)` 保持对导航手势条的避让。
+
+---
+
+## 3. UI 组件（`view/`）
+
+### 3.1 `EmulatorScreen`（[EmulatorScreen.ets](../../entry/src/main/ets/view/EmulatorScreen.ets)）
+
+渲染 emulated 画面并把触摸/鼠标/滚轮映射为 guest 鼠标事件。**最复杂的手势状态机**。
+
+- **渲染链**：`emu.onFrame` → `updateFrame()`（维护 `PixelMap`，尺寸变化时重建）→
+  `redraw()`（读取 `getMouseLayout()` 得到 draw rect，`imageSmoothingEnabled=false` 最近邻绘制）。
+- **坐标链**（5 级，见文件头注释）：组件 vp → 引擎 draw rect → `canvasToFrame` 逐轴反解（PAR 各向异性）
+  → `ohos_input` 帧像素→画布空间 → `MOUSE_EventMoved` 驱动无缝 INT 33h 光标。
+- **触摸手势表**：
+
+  | 手势 | 映射 |
+  | --- | --- |
+  | 点按 | 左键单击 |
+  | 滑动越过 slosh（10vp） | 仅移动光标，不按键 |
+  | 双击（≤300ms、≤10vp） | 两组普通点击 |
+  | 双击后按住滑动 | 左键拖拽 |
+  | 长按 480ms | 右键，可继续右键拖拽 |
+  | 双指滑动 | 滚轮（48vp/格），抬起后带惯性滑行 |
+  | 双指轻点（≤250ms） | 中键 |
+  | 滚轮/触控板轴事件 | `onAxisEvent`，15°/格 |
+
+- **物理鼠标**：`handleMouse`（Hover/Move/Press/Release），相对增量按密度换算为物理像素。
+- **画布尺寸**：`onAreaChange` 上报 `setCanvasSize()`，并做一次 100ms 后的延迟重绘以拾取异步刷新的 draw rect。
+
+### 3.2 `ControlKeyBar`（[ControlKeyBar.ets](../../entry/src/main/ets/view/ControlKeyBar.ets)）
+
+底部无边框控制键栏（HiSH 风格），两行：`ESC ALT DEL | PGUP HOME ↑ END` 与
+`TAB CTRL INS | PGDN ← ↓ →`。Ctrl/Alt 为**粘滞（sticky）** 锁存：按下发 down，再按发 up；
+普通键被锁存的修饰键包裹后注入。导出 `controlCornerButton(icon, action)` 供 `Index` 复用角落按钮样式。
+
+### 3.3 `KeyboardPanel`（[KeyboardPanel.ets](../../entry/src/main/ets/view/KeyboardPanel.ets)）
+
+应用内全功能 PC 键盘，半透明悬浮于画面底部（不挤压画面）。包含导航行、F1–F12 行、
+以及主键区 5 行。Shift/Ctrl/Alt 为粘滞锁存，Caps 有本地指示灯。支持**长按自动重复**
+（380ms 延迟后每 80ms 一对 down/up）。隐藏时释放所有仍按住的修饰键，避免 guest 卡键。
+
+### 3.4 `SettingsSheet`（[SettingsSheet.ets](../../entry/src/main/ets/view/SettingsSheet.ets)）
+
+设置面板内容，由 `Index` 的 `bindSheet` 承载（强制居中浮动卡片样式）。分组：
+
+| 分组 | 内容 |
+| --- | --- |
+| 模拟器 | CPU 速度（`CPU_OPTIONS` 预设）、静音、自动挂载 C:、禁用系统软键盘、重启模拟器 |
+| 网络 | 网卡（NE2000）、TCP/UDP 端口转发、IPX 联机 |
+| 网卡参数（虚拟 NAT） | IP / 子网掩码 / 网关 / DNS（`resolvedNetworkParams()` 兜底） |
+| 关于 | 应用版本、项目仓库、反馈邮箱（mailto Want）、隐私政策、开源许可（`bindContentCover` 打开 `LicenseSheet`） |
+
+设置项通过 `@StorageLink('settings.*')` 双向绑定到 `AppSettings` 播种的 AppStorage 键，
+写回走 `AppSettings.setXxx()`。CPU/声音/网络为**启动期设置**：改动只重生成配置，
+需「重启模拟器」生效；文本框在每次输入即持久化，`onBlur` 时提示重启。
+
+### 3.5 `LicenseSheet`（[LicenseSheet.ets](../../entry/src/main/ets/view/LicenseSheet.ets)）
+
+开源许可子页（全屏模态叠加在设置面板上），逐行列出组件名/角色/许可证/源码链接，
+是 `third_party/NOTICE.md` 的用户可见呈现。点击行经 `openLink` 打开系统浏览器。
+
+---
+
+## 4. 组件与控制器的关系约定
+
+所有 UI 组件通过**普通成员**（非 `@Prop`）接收 `DosEmulator` 实例。原因：
+
+- `@Prop` 会**深拷贝**控制器对象，子组件将操作一个与页面断开的副本，
+  永远看不到 `running = true`，画面收不到帧、注入被门禁拦截。
+- 普通成员传递的是**引用**，且必须声明为 `public`（private 成员无法用于构造初始化）。
+
+见 `EmulatorScreen` / `ControlKeyBar` / `KeyboardPanel` / `SettingsSheet` 的成员注释。
