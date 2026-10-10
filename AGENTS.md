@@ -140,6 +140,23 @@ entry/src/main/
   taps between keys never reach the DOS mouse. While it is up, `imeLayer` and `controlOverlay` are unmounted (the
   panel owns the bottom edge and carries its own hide button), and its sticky modifiers are released in
   `aboutToDisappear` or the guest keeps them held.
+- Guest-owned keys are intercepted at `onKeyPreIme` (root + imeLayer) and consumed: `DosKeyMap.isTraversalKey`
+  (Tab, direction keys) plus `isActivationKey` (Enter family, root only — the field's Enter stays on the
+  content-diff path). Tab is the key that cannot be handled any other way: the focus stage consumes it and
+  `onKeyEvent` never fires for it (measured on device), so the guest silently loses command line completion. The
+  direction keys do reach `onKeyEvent` and are injected there, but they also drive focus traversal, which parks
+  focus on the corner chrome; Enter then activates that button instead of executing the guest command, so the
+  interception keeps focus on the page. Every touch-only chrome button (control overlay corners, KeyboardPanel
+  hide, 2in1 title-bar symbols) carries `tabIndex(-1)`: focusable for taps and assistive focus, invisible to Tab
+  traversal. Two consequences are deliberate: (a) while the settings sheet or the quick menu is open every
+  hardware-key path declines (`Index.modalOpen`), so the overlay keeps its keys and none of them reach the guest
+  running behind it; (b) with the guest owning these keys the app's own chrome has no keyboard route on any form
+  factor, and 2in1 — which mounts no control overlay, so its title row is the whole control surface — reaches it by
+  pointer only. Every 2in1 has a pointer, and a keyboard escape hatch would have to take a key away from the guest
+  (DOS apps use F1..F12 heavily), so adding one is a separate decision, not part of the input fix. All of it rests
+  on `Index.imeFieldActive` (mount + focus, never `onBlur` alone) being the predicate shared by the root
+  `onKeyPreIme` and `handleKey`: the field can be unmounted (`blockSoftKeyboard`, in-app keyboard) without a
+  guaranteed blur, and a stuck flag would either drop every key at the root or restore the Tab defect.
 - The `blockSoftKeyboard` setting (settings sheet 禁用系统软键盘, persisted via `AppSettings`) unmounts
   `imeLayer` for good: canvas taps then never summon the system soft keyboard, and text goes through `KeyboardPanel`
   or hardware keyboards only. Pure UI behavior, no engine involvement, effective the moment it is set.

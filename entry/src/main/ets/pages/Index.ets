@@ -261,6 +261,26 @@ struct Index {
     }
   }
 
+  /**
+   * True only while the invisible IME field is mounted AND holds focus: only
+   * then do its own handlers run, and only then must the root keep out of the
+   * way. The mount half is load-bearing — the field can be unmounted
+   * (blockSoftKeyboard, in-app keyboard) without a guaranteed onBlur, and a
+   * stuck focus flag would silently drop every hardware key at the root.
+   */
+  private imeFieldActive(): boolean {
+    return this.imeFocused && !this.blockSoftKeyboard && !this.keyboardVisible;
+  }
+
+  /**
+   * True while an overlay owns the keyboard: the settings sheet and the quick
+   * menu keep their keys instead of letting them reach the guest running behind
+   * the overlay. Consulted by every hardware-key injection path.
+   */
+  private modalOpen(): boolean {
+    return this.showSettings || this.showMenu;
+  }
+
   private handleKey(event: KeyEvent): void {
     if (!this.booted) {
       return;
@@ -268,10 +288,13 @@ struct Index {
     if (event.type !== KeyType.Down && event.type !== KeyType.Up) {
       return;
     }
-    // While the IME field holds focus its key events bubble up to the root;
-    // the field's own handlers already forward them (handleImeKeyEvent and
-    // the content diff), so injecting here would double every keystroke.
-    if (this.imeFocused) {
+    if (this.modalOpen()) {
+      return;
+    }
+    // While the active IME field holds focus its key events bubble up to the
+    // root; the field's own handlers already forward them (handleImeKeyEvent
+    // and the content diff), so injecting here would double every keystroke.
+    if (this.imeFieldActive()) {
       return;
     }
     if (!DosKeyMap.isInjectable(event.keyCode)) {
@@ -279,6 +302,33 @@ struct Index {
       return;
     }
     this.emu.injectKey(event.keyCode, event.type === KeyType.Down);
+  }
+
+  /**
+   * Injects the guest-owned keys at the onKeyPreIme stage and consumes them,
+   * because onKeyEvent cannot consume anything: the framework would still run
+   * focus traversal and button activation afterwards. Tab never reaches
+   * onKeyEvent at all (measured on device: the callback is not invoked for it),
+   * so without this the guest silently loses command line completion; the
+   * direction keys do arrive, but they also move focus onto the corner chrome,
+   * and the next Enter then activates that button instead of executing the
+   * guest command. The IME field passes allowActivation=false so its Enter
+   * stays on the content-diff path (soft keyboard and hardware Enter behave
+   * identically); the root has no diff path and consumes the Enter family too.
+   */
+  private injectGuestOwnedKey(event: KeyEvent, allowActivation: boolean): boolean {
+    if (!this.booted) {
+      return false;
+    }
+    if (event.type !== KeyType.Down && event.type !== KeyType.Up) {
+      return false;
+    }
+    if (!DosKeyMap.isTraversalKey(event.keyCode) &&
+      !(allowActivation && DosKeyMap.isActivationKey(event.keyCode))) {
+      return false;
+    }
+    this.emu.injectKey(event.keyCode, event.type === KeyType.Down);
+    return true;
   }
 
   /**
@@ -336,6 +386,9 @@ struct Index {
       return;
     }
     if (event.type !== KeyType.Down && event.type !== KeyType.Up) {
+      return;
+    }
+    if (this.modalOpen()) {
       return;
     }
     if (DosKeyMap.isImeHandled(event.keyCode)) {
@@ -543,6 +596,7 @@ struct Index {
         .justifyContent(FlexAlign.Center)
         .borderRadius(6)
         .hoverEffect(HoverEffect.Highlight)
+        .tabIndex(-1)
         .onClick(() => {
           this.emu.togglePause();
           this.paused = this.emu.isPaused();
@@ -558,6 +612,7 @@ struct Index {
         .justifyContent(FlexAlign.Center)
         .borderRadius(6)
         .hoverEffect(HoverEffect.Highlight)
+        .tabIndex(-1)
         .onClick(() => {
           this.emu.reset();
           this.paused = false;
@@ -573,6 +628,7 @@ struct Index {
         .justifyContent(FlexAlign.Center)
         .borderRadius(6)
         .hoverEffect(HoverEffect.Highlight)
+        .tabIndex(-1)
         .onClick(() => {
           this.handleMountButton();
         })
@@ -590,6 +646,7 @@ struct Index {
         .justifyContent(FlexAlign.Center)
         .borderRadius(6)
         .hoverEffect(HoverEffect.Highlight)
+        .tabIndex(-1)
         .onClick(() => {
           this.handleCdButton();
         })
@@ -606,6 +663,7 @@ struct Index {
         .justifyContent(FlexAlign.Center)
         .borderRadius(6)
         .hoverEffect(HoverEffect.Highlight)
+        .tabIndex(-1)
         .onClick(() => {
           this.openSettings();
         })
@@ -736,6 +794,10 @@ struct Index {
     .width('100%')
     .height(40)
     .justifyContent(FlexAlign.Center)
+    // Touch-only chrome: reachable by tap and by assistive focus, but not
+    // by Tab traversal, so a hardware keyboard never parks focus here and
+    // swallows guest keys (Tab/Enter would activate the button instead).
+    .tabIndex(-1)
     .onClick(() => {
       this.showMenu = !this.showMenu;
     })
@@ -791,6 +853,7 @@ struct Index {
             .width('100%')
             .height(40)
             .justifyContent(FlexAlign.Center)
+            .tabIndex(-1)
             .onClick(() => {
               this.toggleKeyboard();
             })
@@ -803,6 +866,7 @@ struct Index {
             .width('100%')
             .height(40)
             .justifyContent(FlexAlign.Center)
+            .tabIndex(-1)
             .onClick(() => {
               this.barExpanded = false;
             })
@@ -879,6 +943,16 @@ struct Index {
       .onBlur(() => {
         this.imeFocused = false;
       })
+      // Tab must be injected before the focus stage consumes it (onKeyEvent
+      // never sees it), and the direction keys must not move the caret or drive
+      // traversal; Enter stays on the IME commit path below. A modal keeps the
+      // keys, exactly as on the root.
+      .onKeyPreIme((event: KeyEvent): boolean => {
+        if (this.modalOpen()) {
+          return false;
+        }
+        return this.injectGuestOwnedKey(event, false);
+      })
       .onKeyEvent((event: KeyEvent) => {
         this.handleImeKeyEvent(event);
       })
@@ -950,6 +1024,17 @@ struct Index {
       }
     })
     .focusable(true)
+    // Guest-owned keys are consumed here before the framework's focus
+    // traversal or button activation can eat them; everything else falls
+    // through to handleKey below. The predicates keep this handler and the
+    // field's own exclusive: with the field active the field injects first, and
+    // an open overlay keeps the keys for itself.
+    .onKeyPreIme((event: KeyEvent): boolean => {
+      if (this.imeFieldActive() || this.modalOpen()) {
+        return false;
+      }
+      return this.injectGuestOwnedKey(event, true);
+    })
     // An explicit defaultFocus(true) makes the initial page-focus descent land
     // on the first focusable child — the invisible IME TextArea on touch
     // devices — and the soft keyboard then rises at every launch. 2in1 has no

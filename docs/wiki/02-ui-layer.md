@@ -80,10 +80,22 @@ boot()
 
 | 方法 | 说明 |
 | --- | --- |
+| `injectGuestOwnedKey` | `onKeyPreIme` 阶段拦截 guest 独占键并消费事件：`DosKeyMap.isTraversalKey`（Tab/方向键）在根节点与 IME 字段都拦截，`isActivationKey`（回车族）仅根节点拦截（字段聚焦时回车必须走内容差分，与软键盘回车行为一致）。Tab 只有在此阶段才能到达 guest |
 | `handleKey` | 根节点 `onKeyEvent`；IME 聚焦时跳过以避免与内容差分重复注入；经 `DosKeyMap.isInjectable` 过滤后注入 |
 | `handleImeChange` | IME 字段内容差分：删除→退格、插入→`typeIntoGuest`（超 32 字符的删除视为全选清除，直接吞掉） |
 | `handleImeKeyEvent` | IME 聚焦期间到达的硬件键事件；文本类键交给差分，其余走直接注入 |
 | `onPageHide` / `onPageShow` | 切后台自动暂停、返回自动恢复（`autoPaused` 标记） |
+
+**为什么需要 `onKeyPreIme` 拦截**：ArkUI 的键事件分发里，`onKeyEvent` 与走焦/按钮激活处于同一阶段，而 `onKeyEvent`
+没有返回值、无法消费事件。Tab 更早：真机验证（hilog 中只有 `OnKeyEventInteral`、没有 `OnKeyEventUser`）显示 Tab 在走焦
+阶段就被消费，`onKeyEvent` 根本不会被调用，应用侧无从注入，guest 静默失去命令行补全。方向键会到达 `onKeyEvent` 并被注入
+（历史召回、光标移动实测正常），但同样驱动走焦，焦点会停在底部控制栏的齿轮/键盘/收起按钮上，随后的回车被该按钮激活吃掉。
+`onKeyPreIme` 返回 `true` 表示事件已消费（SDK 声明里列出的是 `keyboardShortcut`、输入法事件、`onKeyEventDispatch` 与 `onKeyEvent`，
+是否一并挡下走焦没有文档说明；实测表现是 Tab 不再落到控制栏按钮上，但同一提交里的 `tabIndex(-1)` 让这两者在真机上无法彼此隔离）。
+因此在这里注入并消费才能让 guest 独占这些键；根节点与字段的回调互斥（字段挂载且聚焦时根节点不注入），避免同一按键被注入两次；
+设置面板或快捷菜单打开时四条硬件键注入路径（两个 `onKeyPreIme`、根与字段的 `onKeyEvent`）一律放弃，按键留给界面。
+两个副作用要记住：字段聚焦时系统输入法同样看不到方向键，组合输入的候选导航会受影响；guest 独占这些键后应用自身 chrome
+在键盘上不再可达，2in1 的取舍见 AGENTS.md。
 
 ### 2.4 挂载逻辑
 
@@ -101,9 +113,11 @@ boot()
 - `controlOverlay()`：底部悬浮控制层（展开=控制栏，收起=角落齿轮/键盘/展开按钮）；
   用 `HitTestMode.None` 让空白区域触摸落到画面（DOS 鼠标）上。
 - `imeLayer()`：覆盖全屏的**不可见** `TextArea`，点按原生聚焦即唤起系统输入法，
-  `HitTestMode.Transparent` 让同一次触摸也到达 `EmulatorScreen`。
+  `HitTestMode.Transparent` 让同一次触摸也到达 `EmulatorScreen`（字段未注册 `onMouse`/`onAxisEvent`，
+  触摸板移动/点击与滚轮轴事件照常落在画布上）。
 - `build()`：桌面加标题行；否则 `Stack` 叠加 `EmulatorScreen` + `imeLayer`/`controlOverlay`/`KeyboardPanel`；
-  根节点 `bindSheet` 挂载设置面板。
+  根节点 `bindSheet` 挂载设置面板。底部控制栏的齿轮/键盘/收起等触屏专用按钮带 `tabIndex(-1)`：
+  可点击、可被辅助焦点选中，但不参与 Tab 走焦，硬件键盘因此不会把焦点停在 UI 按钮上吞掉 guest 的按键。
 
 ### 2.6 设备差异
 

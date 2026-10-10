@@ -350,6 +350,9 @@ export struct KeyboardPanel {
         .height('100%')
         .borderRadius(5)
         .backgroundColor('#8033333B')
+        // Touch-only chrome: out of Tab traversal so a hardware keyboard
+        // never parks focus here and swallows guest keys.
+        .tabIndex(-1)
         .onClick(() => {
           this.onHide();
         })

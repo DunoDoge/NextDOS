@@ -12,6 +12,8 @@ export class ControlKeyDef {
  * Borderless corner glyph cell (collapse/expand chevron) matching the bare
  * text key style: no chip background, the strip behind it is the surface.
  * Static icon + handler only, so by-value @Builder params are safe.
+ * tabIndex(-1) keeps the touch-only chrome out of Tab traversal so a
+ * hardware keyboard never parks focus on it (see Index.gearMenuButton).
  */
 @Builder
 export function controlCornerButton(icon: Resource, action: () => void) {
@@ -23,6 +25,7 @@ export function controlCornerButton(icon: Resource, action: () => void) {
   .width('100%')
   .height(40)
   .justifyContent(FlexAlign.Center)
+  .tabIndex(-1)
   .onClick(() => {
     action();
   })

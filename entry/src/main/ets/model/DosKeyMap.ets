@@ -75,10 +75,51 @@ export class DosKeyMap {
   }
 
   /**
-   * Keys an edit box consumes itself when it holds focus (text insertion,
-   * Enter, backspace, Tab, CapsLock). While the IME input field is focused
-   * these reach the guest through the field's content diff, never by direct
-   * injection — injecting them would deliver every keystroke twice.
+   * Keys the ArkUI focus system drives traversal with; the guest owns them
+   * (Tab completes the command line, the direction keys recall history and
+   * steer games), so Index intercepts them at the onKeyPreIme stage before
+   * traversal runs. Tab needs the interception to reach the guest at all; the
+   * direction keys need it only to keep focus off the touch-only chrome.
+   */
+  static isTraversalKey(keyCode: number): boolean {
+    switch (keyCode) {
+      case KeyCode.KEYCODE_TAB:
+      case KeyCode.KEYCODE_DPAD_UP:
+      case KeyCode.KEYCODE_DPAD_DOWN:
+      case KeyCode.KEYCODE_DPAD_LEFT:
+      case KeyCode.KEYCODE_DPAD_RIGHT:
+        return true;
+      default:
+        return false;
+    }
+  }
+
+  /**
+   * Keys that activate a focused UI control instead of reaching the
+   * guest. Only the page root intercepts these: while the IME field is
+   * focused, Enter must stay on the content-diff path (the field commits
+   * a newline, the diff injects it) so the soft keyboard's Enter and the
+   * hardware Enter behave identically.
+   */
+  static isActivationKey(keyCode: number): boolean {
+    switch (keyCode) {
+      case KeyCode.KEYCODE_ENTER:
+      case KeyCode.KEYCODE_NUMPAD_ENTER:
+        return true;
+      default:
+        return false;
+    }
+  }
+
+  /**
+   * Keys an edit box consumes when it holds focus (text insertion, Enter,
+   * backspace, CapsLock). While the IME input field is active these reach the
+   * guest through the field's content diff, never by direct injection, or every
+   * keystroke would be delivered twice. TAB is the exception the edit box cannot
+   * forward (it produces no content): it is injected in
+   * Index.injectGuestOwnedKey, and it stays in this list so that the declined
+   * interception (a modal is open) keeps Tab away from the guest instead of
+   * letting it fall through to the direct-injection path.
    */
   static isImeHandled(keyCode: number): boolean {
     const code: number = keyCode;
