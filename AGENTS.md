@@ -148,15 +148,15 @@ entry/src/main/
   focus on the corner chrome; Enter then activates that button instead of executing the guest command, so the
   interception keeps focus on the page. Every touch-only chrome button (control overlay corners, KeyboardPanel
   hide, 2in1 title-bar symbols) carries `tabIndex(-1)`: focusable for taps and assistive focus, invisible to Tab
-  traversal. Two consequences are deliberate and must not be "fixed" by guessing: (a) the root declines while the
-  settings sheet or the quick menu is open, so a modal keeps its keys and they never leak into the guest; (b) with
-  the guest owning these keys the app's own chrome has no keyboard route on any form factor, and 2in1 — which
-  mounts no control overlay, so its title row is the whole control surface — reaches it by pointer only. Every 2in1
-  has a pointer, and a keyboard escape hatch would have to take a key away from the guest (DOS apps use F1..F12
-  heavily), so adding one is a separate decision, not part of the input fix. The two handlers are mutually
-  exclusive through the mount/focus conditions rather than through `onBlur` alone: the field can be unmounted
-  (`blockSoftKeyboard`, in-app keyboard) without a guaranteed blur, and a stuck flag would silently restore the
-  Tab defect.
+  traversal. Two consequences are deliberate: (a) while the settings sheet or the quick menu is open every
+  hardware-key path declines (`Index.modalOpen`), so the overlay keeps its keys and none of them reach the guest
+  running behind it; (b) with the guest owning these keys the app's own chrome has no keyboard route on any form
+  factor, and 2in1 — which mounts no control overlay, so its title row is the whole control surface — reaches it by
+  pointer only. Every 2in1 has a pointer, and a keyboard escape hatch would have to take a key away from the guest
+  (DOS apps use F1..F12 heavily), so adding one is a separate decision, not part of the input fix. All of it rests
+  on `Index.imeFieldActive` (mount + focus, never `onBlur` alone) being the predicate shared by the root
+  `onKeyPreIme` and `handleKey`: the field can be unmounted (`blockSoftKeyboard`, in-app keyboard) without a
+  guaranteed blur, and a stuck flag would either drop every key at the root or restore the Tab defect.
 - The `blockSoftKeyboard` setting (settings sheet 禁用系统软键盘, persisted via `AppSettings`) unmounts
   `imeLayer` for good: canvas taps then never summon the system soft keyboard, and text goes through `KeyboardPanel`
   or hardware keyboards only. Pure UI behavior, no engine involvement, effective the moment it is set.

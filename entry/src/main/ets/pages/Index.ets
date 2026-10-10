@@ -261,6 +261,26 @@ struct Index {
     }
   }
 
+  /**
+   * True only while the invisible IME field is mounted AND holds focus: only
+   * then do its own handlers run, and only then must the root keep out of the
+   * way. The mount half is load-bearing — the field can be unmounted
+   * (blockSoftKeyboard, in-app keyboard) without a guaranteed onBlur, and a
+   * stuck focus flag would silently drop every hardware key at the root.
+   */
+  private imeFieldActive(): boolean {
+    return this.imeFocused && !this.blockSoftKeyboard && !this.keyboardVisible;
+  }
+
+  /**
+   * True while an overlay owns the keyboard: the settings sheet and the quick
+   * menu keep their keys instead of letting them reach the guest running behind
+   * the overlay. Consulted by every hardware-key injection path.
+   */
+  private modalOpen(): boolean {
+    return this.showSettings || this.showMenu;
+  }
+
   private handleKey(event: KeyEvent): void {
     if (!this.booted) {
       return;
@@ -268,10 +288,13 @@ struct Index {
     if (event.type !== KeyType.Down && event.type !== KeyType.Up) {
       return;
     }
-    // While the IME field holds focus its key events bubble up to the root;
-    // the field's own handlers already forward them (handleImeKeyEvent and
-    // the content diff), so injecting here would double every keystroke.
-    if (this.imeFocused) {
+    if (this.modalOpen()) {
+      return;
+    }
+    // While the active IME field holds focus its key events bubble up to the
+    // root; the field's own handlers already forward them (handleImeKeyEvent
+    // and the content diff), so injecting here would double every keystroke.
+    if (this.imeFieldActive()) {
       return;
     }
     if (!DosKeyMap.isInjectable(event.keyCode)) {
@@ -363,6 +386,9 @@ struct Index {
       return;
     }
     if (event.type !== KeyType.Down && event.type !== KeyType.Up) {
+      return;
+    }
+    if (this.modalOpen()) {
       return;
     }
     if (DosKeyMap.isImeHandled(event.keyCode)) {
@@ -919,8 +945,12 @@ struct Index {
       })
       // Tab must be injected before the focus stage consumes it (onKeyEvent
       // never sees it), and the direction keys must not move the caret or drive
-      // traversal; Enter stays on the IME commit path below.
+      // traversal; Enter stays on the IME commit path below. A modal keeps the
+      // keys, exactly as on the root.
       .onKeyPreIme((event: KeyEvent): boolean => {
+        if (this.modalOpen()) {
+          return false;
+        }
         return this.injectGuestOwnedKey(event, false);
       })
       .onKeyEvent((event: KeyEvent) => {
@@ -996,14 +1026,11 @@ struct Index {
     .focusable(true)
     // Guest-owned keys are consumed here before the framework's focus
     // traversal or button activation can eat them; everything else falls
-    // through to handleKey below. The two handlers are mutually exclusive: with
-    // the IME field mounted and focused its own onKeyPreIme runs first, so
-    // injecting here too would double every key (the mount conditions are
-    // checked because the field can vanish without a guaranteed onBlur). While
-    // the settings sheet or the quick menu is open the keys belong to the UI.
+    // through to handleKey below. The predicates keep this handler and the
+    // field's own exclusive: with the field active the field injects first, and
+    // an open overlay keeps the keys for itself.
     .onKeyPreIme((event: KeyEvent): boolean => {
-      if ((this.imeFocused && !this.blockSoftKeyboard && !this.keyboardVisible) ||
-        this.showSettings || this.showMenu) {
+      if (this.imeFieldActive() || this.modalOpen()) {
         return false;
       }
       return this.injectGuestOwnedKey(event, true);
