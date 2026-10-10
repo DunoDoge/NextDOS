@@ -996,11 +996,14 @@ struct Index {
     .focusable(true)
     // Guest-owned keys are consumed here before the framework's focus
     // traversal or button activation can eat them; everything else falls
-    // through to handleKey below. This callback also runs for events bubbled
-    // out of the focused IME field, so the imeFocused guard is what keeps such
-    // a key from being injected twice (the field's own handler runs first).
+    // through to handleKey below. The two handlers are mutually exclusive: with
+    // the IME field mounted and focused its own onKeyPreIme runs first, so
+    // injecting here too would double every key (the mount conditions are
+    // checked because the field can vanish without a guaranteed onBlur). While
+    // the settings sheet or the quick menu is open the keys belong to the UI.
     .onKeyPreIme((event: KeyEvent): boolean => {
-      if (this.imeFocused) {
+      if ((this.imeFocused && !this.blockSoftKeyboard && !this.keyboardVisible) ||
+        this.showSettings || this.showMenu) {
         return false;
       }
       return this.injectGuestOwnedKey(event, true);

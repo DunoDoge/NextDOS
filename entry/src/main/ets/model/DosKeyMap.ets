@@ -115,7 +115,11 @@ export class DosKeyMap {
    * Keys an edit box consumes itself when it holds focus (text insertion,
    * Enter, backspace, Tab, CapsLock). While the IME input field is focused
    * these reach the guest through the field's content diff, never by direct
-   * injection — injecting them would deliver every keystroke twice.
+   * injection — injecting them would deliver every keystroke twice. Tab is the
+   * one the field cannot forward (it produces no content): it is injected in
+   * Index.injectGuestOwnedKey, and it stays in this list so that a declined
+   * interception (a modal sheet is open) keeps the key with the UI instead of
+   * leaking it into the guest.
    */
   static isImeHandled(keyCode: number): boolean {
     const code: number = keyCode;
