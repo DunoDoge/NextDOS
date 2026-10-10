@@ -134,10 +134,7 @@ entry/src/main/
   (`Index.imeLayer`) whose content `Index.handleImeChange` diffs into `DosEmulator.typeIntoGuest`, with
   `KeyboardAvoidMode.RESIZE` keeping the canvas visible; while that field is focused, hardware-key events still bubble
   to the root `onKeyEvent` and text-producing keys must not be injected there (`DosKeyMap.isImeHandled`), they already
-  arrive as the field diff. The field is the FIRST child of Index's Stack, BELOW `EmulatorScreen`, and the canvas
-  carries `HitTestMode.Transparent` so touches still fan out to the field while mouse/wheel events stay on the
-  topmost canvas: a field on top swallows every touchpad move and click (guest cursor frozen, clicks focused the
-  field) while finger taps kept working. In-app keyboard: `KeyboardPanel` (full PC layout, sticky Shift/Ctrl/Alt, hold-to-repeat)
+  arrive as the field diff. In-app keyboard: `KeyboardPanel` (full PC layout, sticky Shift/Ctrl/Alt, hold-to-repeat)
   floats translucently over the bottom of the canvas as the LAST child of Index's Stack — the canvas keeps its full
   size, no `setCanvasSize` refit happens while it is up, and default hit testing consumes every touch on the strip so
   taps between keys never reach the DOS mouse. While it is up, `imeLayer` and `controlOverlay` are unmounted (the
@@ -145,11 +142,13 @@ entry/src/main/
   `aboutToDisappear` or the guest keeps them held.
 - Guest-owned keys are intercepted at `onKeyPreIme` (root + imeLayer) and consumed: `DosKeyMap.isTraversalKey`
   (Tab, direction keys) plus `isActivationKey` (Enter family, root only — the field's Enter stays on the
-  content-diff path). ArkUI runs focus traversal and button activation in the same stage as `onKeyEvent`, so
-  without the interception Tab walks the corner chrome (gear/keyboard/chevron) and Enter clicks the focused
-  button; the guest then loses Tab completion, history recall and command execution with no error. Every
-  touch-only chrome button (control overlay corners, KeyboardPanel hide, 2in1 title-bar symbols) carries
-  `tabIndex(-1)`: focusable for taps and assistive focus, invisible to Tab traversal.
+  content-diff path). Tab is the key that cannot be handled any other way: the focus stage consumes it and
+  `onKeyEvent` never fires for it (measured on device), so the guest silently loses command line completion. The
+  direction keys do reach `onKeyEvent` and are injected there, but they also drive focus traversal, which parks
+  focus on the corner chrome; Enter then activates that button instead of executing the guest command, so the
+  interception keeps focus on the page. Every touch-only chrome button (control overlay corners, KeyboardPanel
+  hide, 2in1 title-bar symbols) carries `tabIndex(-1)`: focusable for taps and assistive focus, invisible to Tab
+  traversal.
 - The `blockSoftKeyboard` setting (settings sheet 禁用系统软键盘, persisted via `AppSettings`) unmounts
   `imeLayer` for good: canvas taps then never summon the system soft keyboard, and text goes through `KeyboardPanel`
   or hardware keyboards only. Pure UI behavior, no engine involvement, effective the moment it is set.

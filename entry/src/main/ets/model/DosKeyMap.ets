@@ -75,15 +75,11 @@ export class DosKeyMap {
   }
 
   /**
-   * Keys the ArkUI focus system consumes before any component callback
-   * sees them: Tab and the direction keys drive focus traversal across
-   * every focusable node on the page. A DOS guest owns these keys (Tab
-   * completes the command line, the direction keys recall history and
-   * steer games), so they are intercepted at the onKeyPreIme stage —
-   * before traversal — and injected directly. The IME field intercepts
-   * the same set: with the invisible field focused the framework would
-   * otherwise move the caret or the focus away and the guest would never
-   * see the key.
+   * Keys the ArkUI focus system drives traversal with; the guest owns them
+   * (Tab completes the command line, the direction keys recall history and
+   * steer games), so Index intercepts them at the onKeyPreIme stage before
+   * traversal runs. Tab needs the interception to reach the guest at all; the
+   * direction keys need it only to keep focus off the touch-only chrome.
    */
   static isTraversalKey(keyCode: number): boolean {
     switch (keyCode) {

@@ -812,13 +812,6 @@ export struct EmulatorScreen {
       .width('100%')
       .height('100%')
       .backgroundColor('#000000')
-      // Transparent so a tap also reaches the IME field below this canvas
-      // in the Stack (Index.imeLayer) and raises the system soft keyboard.
-      // It must NOT block that sibling: the field is the only way a canvas
-      // tap attaches the input method. Mouse and wheel events are
-      // dispatched to the topmost hit node only, so they stay on this
-      // canvas and reach handleMouse/handleAxis instead of the field.
-      .hitTestBehavior(HitTestMode.Transparent)
       .onAreaChange((oldArea: Area, newArea: Area): void => {
         this.canvasW = Number(newArea.width);
         this.canvasH = Number(newArea.height);
