@@ -32,7 +32,7 @@
 
 | 方法 | 说明 |
 | --- | --- |
-| `bootstrap(ctx)` | 首启：`AppSettings.load` → 拷贝 `fd.img` 启动盘 → 激活上次目录的持久化授权并校验、恢复上次的目录/光盘挂载 → `writeConfig()` → `initResources` + `init` |
+| `bootstrap(ctx)` | 首启：`AppSettings.load` → 拷贝 `fd.img` 启动盘 → 激活上次目录的持久化授权并校验、恢复上次的目录/光盘挂载 → `writeConfig()` → `initResources` + `init`；返回 boot 警告文案（空串=无）。恢复持久化光盘记录前用 `CdImage.verifySlotMountable` 判定槽位镜像仍可加载（非空、cue 兄弟齐全、二进制有 PVD），不可用则清除记录、清空槽位并返回警告（UI 开机 toast） |
 | `start()` | 调用 `testNapi.start(confPath)` 派生引擎线程 |
 | `stop()` / `reset()` / `pause()` / `resume()` / `togglePause()` | 对应 NAPI 控制接口；`reset` 为全量重初始化 |
 | `rewriteConfig()` | 仅按当前设置重生成配置（供启动期设置改动后调用） |
@@ -137,8 +137,9 @@ UTF-8 autoexec passthrough 补丁保证重启后 `[autoexec]` 里的 UTF-8 路�
 | `pick(ctx)` | 打开文档选择器（后缀过滤 `.iso/.cue/.bin/.img`），取消返回 `null` |
 | `stage(picked, ctx)` | 按扩展名分派到 `stageCue` / `stageBinary`，不支持则抛中文提示 |
 | `verifySlot(path)` | 校验持久化槽位是否仍存在（不存在则调用方清除记录） |
+| `verifySlotMountable(path)` | 恢复持久化记录前的可加载性校验：先 `verifySlot`，再要求非空；cue 需槽位内引用的音轨齐全，二进制需 `probePvd` 命中（引擎 `-t iso` 装载器本身就是 PVD 探测，未命中必然在 guest 内挂载失败） |
 | `clearSlot(ctx)` | 删除槽位全部文件与目录（**必须在卸载注入完成后**调用） |
-| `stageBinary` | 复制镜像到 `cdrom.<ext>`，并 `probePvd` 嗅探 ISO9660 PVD（仅作提示，不阻断） |
+| `stageBinary` | 复制镜像到 `cdrom.<ext>`（0 字节文件复制前即拒绝），并 `probePvd` 嗅探 ISO9660 PVD（仅作提示，不阻断） |
 | `probePvd` / `hasCd001` | 读取 ±32KB 处，检查三处 `CD001` 候选偏移 |
 | `stageCue` | 读并解码 cue（UTF-8 优先，GBK/gb18030 兜底）→ 复制引用的音轨 → 把 cue 重写为 UTF-8 |
 | `parseCueFileNames` / `cueFileName` | 解析 `FILE` 条目（引号/裸 token 两种），镜像引擎的 cue 解析 |
