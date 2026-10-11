@@ -160,10 +160,17 @@ entry/src/main/
 - The `blockSoftKeyboard` setting (settings sheet 禁用系统软键盘, persisted via `AppSettings`) unmounts
   `imeLayer` for good: canvas taps then never summon the system soft keyboard, and text goes through `KeyboardPanel`
   or hardware keyboards only. Pure UI behavior, no engine involvement, effective the moment it is set.
-- Guest drive C: is the app's download folder (`MountFolder`, DOWNLOAD-mode picker, no visible UI). Engine stop/reset in
-  the same process is fragile: embed mode keeps one-shot static latches, so `DosEmulator.mountFolder` never restarts —
-  it types `mount c <dir>` + `c:` into the *running* guest via `typeIntoGuest` and only regenerates the config so
-  future boots re-mount.
+- Guest drive C: is any folder the user picks in the system folder picker (`MountFolder`,
+  `DocumentSelectMode.FOLDER`). A picked folder carries only a temporary grant, so it is persisted right away
+  (`persistAccess`, needs `ohos.permission.FILE_ACCESS_PERSIST`) and re-activated before use (`activateAccess`
+  at boot, quick-menu re-mount and settings target selection) because persisted grants come back inactive after
+  an app restart; `verifyAccess` stays the final reachability judge and every fileShare call is best-effort.
+  Engine stop/reset in the same process is fragile (embed mode keeps one-shot static latches) and
+  `typeIntoGuest` only maps printable ASCII, so `DosEmulator.mountFolder` injects `mount c <dir>` + `c:` into
+  the *running* guest only for ASCII paths (`MountFolder.isTypeable`); a non-ASCII path applies through
+  `reset()` and the `[autoexec]` line, whose UTF-8 host path reaches MOUNT via the engine's autoexec passthrough
+  patch (NOTICE.md). Recent mounts ride `AppSettings.recentMounts` (MRU, max `RECENT_MOUNT_MAX`) and the
+  settings sheet offers them as auto-mount targets.
 - Guest drive D: is a CD image staged into the fixed ASCII slot `filesDir/cdrom/` (`CdImage.ets`) — `typeIntoGuest`
   only delivers printable ASCII, so Chinese image paths can never reach the guest directly. Like C:, there is no NAPI
   export: boot mounts via the `[autoexec]` line, a running guest gets the same line typed in (`DosEmulator.mountCd`).
