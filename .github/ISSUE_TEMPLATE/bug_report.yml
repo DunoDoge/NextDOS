@@ -1,6 +1,7 @@
 name: Bug 反馈
 description: 反馈 NextDOS 在使用中出现的功能异常（输入、声音、显示、挂载、网络等）
 title: "[Bug] "
+labels: [bug]
 body:
   - type: markdown
     attributes:
@@ -43,7 +44,7 @@ body:
     attributes:
       label: NextDOS 应用版本
       description: 应用内「设置」中可查，版本名或版本号均可
-      placeholder: 例：1.1.1
+      placeholder: 例：1.2.0
     validations:
       required: true
 
@@ -62,6 +63,8 @@ body:
         - label: 挂载与文件
         - label: 网络
         - label: 其他
+    validations:
+      required: true
 
   - type: textarea
     id: repro-steps
@@ -97,6 +100,8 @@ body:
         - 偶现（多数情况）
         - 偶现（少数情况）
         - 仅出现一次
+    validations:
+      required: true
 
   - type: input
     id: dos-program

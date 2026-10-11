@@ -1,0 +1,62 @@
+name: 功能请求
+description: 提议新功能、交互与界面优化，或某 DOS 程序的兼容性适配
+title: "[Feature] "
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        感谢提议！请先搜索既有 issue，避免重复。
+        兼容性类请求请尽量说明程序来源与版本，方便定位是引擎能力缺失还是配置问题。
+
+  - type: dropdown
+    id: request-type
+    attributes:
+      label: 请求类型
+      options:
+        - DOS 程序兼容性（某游戏 / 软件无法运行或表现异常）
+        - 新功能（设置项、输入方式、挂载能力等）
+        - 交互与界面优化
+        - 其他
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: 期望的功能或改进
+      description: 描述希望达到的效果，以及它解决的痛点
+      placeholder: 例：希望在设置中支持调整 CPU 周期数，让老旧游戏不再卡顿
+    validations:
+      required: true
+
+  - type: input
+    id: dos-program
+    attributes:
+      label: 涉及的 DOS 程序或游戏
+      description: 兼容性类请求必填，注明版本与语言；其他类型可不填
+      placeholder: 例：仙剑奇侠传 98 柔情版（简体中文）
+
+  - type: textarea
+    id: references
+    attributes:
+      label: 参考与对照
+      description: 其他 DOS 模拟器（如 DOSBox Staging、Magic DOSBox）对该请求的支持情况、相关链接或截图
+      placeholder: 不适用可写「不适用」
+
+  - type: checkboxes
+    id: self-check
+    attributes:
+      label: 提议前自查
+      options:
+        - label: 已更新到最新版本并确认该功能目前不支持
+        - label: 已搜索既有 issue，未发现重复提议
+
+  - type: checkboxes
+    id: contribution
+    attributes:
+      label: 后续配合
+      description: 不勾选也不影响提议被采纳
+      options:
+        - label: 可以提供安装包或磁盘镜像等测试材料
+        - label: 可以在真机上协助验证后续改进的效果
