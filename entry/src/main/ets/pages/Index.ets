@@ -19,6 +19,10 @@ const TAG: string = 'NextDOS';
 // window three buttons; touch devices (phone/tablet) get the bottom
 // Termux-style control key bar instead.
 const IS_DESKTOP: boolean = deviceInfo.deviceType === '2in1';
+// Boot warning toast delay: bootstrap resolves inside the aboutToAppear
+// task chain, before the page attaches to the window, and a toast fired
+// there is dropped silently (measured on emulator).
+const BOOT_WARNING_TOAST_DELAY_MS: number = 2000;
 
 @Entry
 @Component
@@ -105,12 +109,18 @@ struct Index {
 
   private async boot(): Promise<void> {
     const ctx = getContext(this) as common.UIAbilityContext;
-    await this.emu.bootstrap(ctx);
+    const bootWarning: string = await this.emu.bootstrap(ctx);
     this.emu.start();
     this.booted = true;
     // Auto-mount may have restored the last session's folder via [autoexec].
     this.folderMounted = this.emu.isFolderMounted();
     this.cdMounted = this.emu.isCdMounted();
+    if (bootWarning !== '') {
+      // Deferred past first render, see BOOT_WARNING_TOAST_DELAY_MS.
+      setTimeout(() => {
+        this.showToast(bootWarning);
+      }, BOOT_WARNING_TOAST_DELAY_MS);
+    }
     hilog.info(0x0000, TAG, 'NextDOS booted');
   }
 
