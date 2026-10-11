@@ -7,7 +7,8 @@ import { privacyManager } from '@kit.AppGalleryKit';
 import { DosEmulator } from '../model/DosEmulator';
 import { DosKeyMap } from '../model/DosKeyMap';
 import { CdImage, CdPick, CdStaged } from '../model/CdImage';
-import { MountFolder } from '../model/MountFolder';
+import { AppSettings } from '../model/AppSettings';
+import { MountFolder, MountRecord } from '../model/MountFolder';
 import { EmulatorScreen } from '../view/EmulatorScreen';
 import { ControlKeyBar, controlCornerButton } from '../view/ControlKeyBar';
 import { KeyboardPanel } from '../view/KeyboardPanel';
@@ -408,7 +409,33 @@ struct Index {
     this.emu.injectKey(event.keyCode, event.type === KeyType.Down);
   }
 
+  /**
+   * Shared tail of both mount paths (fresh pick + re-mount last): flips the
+   * mounted flag, resyncs paused after a mount-triggered reset() (the sheet's
+   * onRestarted callback only covers the sheet's own restart row), and toasts
+   * how the mount was applied.
+   */
+  private applyMountResult(dir: string, restarted: boolean): void {
+    this.folderMounted = true;
+    if (restarted) {
+      this.paused = false;
+    }
+    this.showToast(restarted ? 'C: 已挂载 ' + dir + '（已重启模拟器）' : 'C: 已挂载 ' + dir);
+  }
+
+  /**
+   * C: mount toggle. Unmounting only ends this session's mount (the record
+   * stays for auto-mount); mounting opens the system folder picker so ANY
+   * accessible folder can be chosen, persists its grant for auto-mount and
+   * records it into the recent-mount MRU. A non-ASCII path applies through
+   * an engine restart inside mountFolder (the injection cannot type it), so
+   * the paused flag is resynced afterwards.
+   */
   private async handleMountButton(): Promise<void> {
+    if (!this.booted) {
+      this.showToast('模拟器启动中，请稍候');
+      return;
+    }
     if (this.mountBusy) {
       return;
     }
@@ -420,16 +447,47 @@ struct Index {
         this.showToast('C: 目录已卸载');
       } else {
         const ctx = getContext(this) as common.UIAbilityContext;
-        const dir: string = await MountFolder.prepareMountDir(ctx);
-        MountFolder.verifyAccess(dir);
-        await this.emu.mountFolder(dir);
-        this.folderMounted = true;
-        this.showToast('C: 已挂载 ' + dir);
+        const picked: MountRecord | null = await MountFolder.pickMountFolder(ctx);
+        if (picked === null) {
+          // Picker cancelled: nothing mounted, no error.
+          return;
+        }
+        MountFolder.verifyAccess(picked.dir);
+        const restarted: boolean = await this.emu.mountFolder(picked.dir, picked.uri);
+        this.applyMountResult(picked.dir, restarted);
       }
     } catch (error) {
       const err = error as BusinessError;
       this.showToast('挂载失败: ' + err.message);
       hilog.error(0x0000, TAG, 'mount folder failed: %{public}s', err.message);
+    } finally {
+      this.mountBusy = false;
+    }
+  }
+
+  /**
+   * One-tap re-mount of the last mounted folder (quick menu row): re-activates
+   * the persisted picker grant first, then mounts. A folder the system no
+   * longer grants access to fails here and must be re-picked.
+   */
+  private async handleMountLastButton(): Promise<void> {
+    if (!this.booted) {
+      this.showToast('模拟器启动中，请稍候');
+      return;
+    }
+    if (this.mountBusy) {
+      return;
+    }
+    this.mountBusy = true;
+    try {
+      await MountFolder.activateAccess(AppSettings.lastMountUri);
+      MountFolder.verifyAccess(AppSettings.lastMountDir);
+      const restarted: boolean = await this.emu.mountFolder(AppSettings.lastMountDir, AppSettings.lastMountUri);
+      this.applyMountResult(AppSettings.lastMountDir, restarted);
+    } catch (error) {
+      const err = error as BusinessError;
+      this.showToast('挂载失败: ' + err.message + '，请重新选择目录');
+      hilog.error(0x0000, TAG, 'mount last folder failed: %{public}s', err.message);
     } finally {
       this.mountBusy = false;
     }
@@ -735,6 +793,28 @@ struct Index {
       .onClick(() => {
         this.handleMountButton();
       })
+
+      // One-tap re-mount of the last mounted folder; only offered while C:
+      // is free and a record exists. Values refresh on the next popup open
+      // (showMenu re-render), so no extra state wiring is needed here.
+      if (!this.folderMounted && AppSettings.lastMountDir !== '') {
+        Divider().color('#2A2A2E')
+
+        Row({ space: 12 }) {
+          SymbolGlyph($r('sys.symbol.folder_fill'))
+            .fontSize(22)
+            .fontColor(['#DDDDDD'])
+          Text('挂载上次目录')
+            .fontSize(16)
+            .fontColor('#FFFFFF')
+            .layoutWeight(1)
+        }
+        .width('100%')
+        .height(44)
+        .onClick(() => {
+          this.handleMountLastButton();
+        })
+      }
 
       Divider().color('#2A2A2E')
 

@@ -3,6 +3,7 @@ import { BusinessError } from '@kit.BasicServicesKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { DosEmulator } from '../model/DosEmulator';
 import { AppSettings, CpuCycleOption } from '../model/AppSettings';
+import { MountFolder, MountRecord } from '../model/MountFolder';
 import { LicenseSheet } from './LicenseSheet';
 
 const TAG = 'NextDOS';
@@ -53,6 +54,7 @@ export struct SettingsSheet {
   @StorageLink('settings.autoMount') autoMount: boolean = false;
   @StorageLink('settings.blockSoftKeyboard') blockSoftKeyboard: boolean = false;
   @StorageLink('settings.lastMountDir') lastMountDir: string = '';
+  @StorageLink('settings.recentMounts') recentMounts: MountRecord[] = [];
   // Network group (keys must match AppSettings.seedAppStorage() verbatim).
   @StorageLink('settings.netNe2000') netNe2000: boolean = false;
   @StorageLink('settings.netTcpForwards') netTcpForwards: string = '';
@@ -184,6 +186,37 @@ export struct SettingsSheet {
     this.toast('模拟器已重启');
   }
 
+  /** Basename of a mount record path, for the compact list row. */
+  private dirName(dir: string): string {
+    const idx: number = dir.lastIndexOf('/');
+    if (idx >= 0 && idx < dir.length - 1) {
+      return dir.substring(idx + 1);
+    }
+    return dir;
+  }
+
+  /** Points the auto-mount target at a record: the [autoexec] line is
+   * rewritten now and the folder mounts on the next boot/restart (the
+   * auto-mount toggle still governs whether it applies). The grant is
+   * activated and probed first: a record persisted in an earlier session
+   * stays inactive (bootstrap only ever activates the current target), and
+   * an unreachable folder would fail the guest-side mount with no
+   * app-visible error. A failed probe keeps the previous target. */
+  private async selectMountTarget(record: MountRecord): Promise<void> {
+    await MountFolder.activateAccess(record.uri);
+    try {
+      MountFolder.verifyAccess(record.dir);
+    } catch (error) {
+      const err = error as BusinessError;
+      this.toast('目录当前不可访问: ' + err.message);
+      return;
+    }
+    AppSettings.setLastMountDir(record.dir);
+    AppSettings.setLastMountUri(record.uri);
+    this.emu.rewriteConfig();
+    this.toast('已设为启动挂载目录，重启模拟器后生效');
+  }
+
   @Builder
   cpuChip(option: CpuCycleOption) {
     Text(option.label)
@@ -277,7 +310,7 @@ export struct SettingsSheet {
           Text('自动挂载 C:')
             .fontSize(16)
             .fontColor('#FFFFFF')
-          Text(this.lastMountDir !== '' ? this.lastMountDir : '尚未挂载过目录')
+          Text(this.lastMountDir !== '' ? '启动时挂载 ' + this.lastMountDir : '尚未选择挂载目录')
             .fontSize(12)
             .fontColor('#8A8A92')
             .margin({ top: 2 })
@@ -294,6 +327,89 @@ export struct SettingsSheet {
       }
       .width('100%')
       .padding({ left: 16, right: 16, top: 10, bottom: 10 })
+
+      Divider()
+        .strokeWidth(0.5)
+        .color('#FFFFFF14')
+        .margin({ left: 16 })
+
+      // Recent C: mount records (MRU, AppSettings.RECENT_MOUNT_MAX): tap a
+      // row to make it the auto-mount target, xmark deletes the record.
+      Text(this.recentMounts.length > 0
+        ? '挂载记录：点击设为启动时挂载的目录'
+        : '暂无挂载记录；通过控制菜单的「挂载目录」选择文件夹后，最近几条记录会显示在这里')
+        .fontSize(12)
+        .fontColor('#6A6A72')
+        .width('100%')
+        .padding({ left: 16, right: 16, top: 10, bottom: 4 })
+
+      ForEach(this.recentMounts, (record: MountRecord, index: number) => {
+        Column() {
+          Row() {
+            // Tappable target area (select as auto-mount target). The delete
+            // button is a sibling, not a child: ClickEvent has no
+            // stopPropagation in this SDK, so nesting it would bubble the
+            // select handler too.
+            Row() {
+              SymbolGlyph($r('sys.symbol.folder'))
+                .fontSize(20)
+                .fontColor(['#DDDDDD'])
+              Column() {
+                Text(this.dirName(record.dir))
+                  .fontSize(15)
+                  .fontColor('#FFFFFF')
+                  .maxLines(1)
+                  .textOverflow({ overflow: TextOverflow.Ellipsis })
+                Text(record.dir)
+                  .fontSize(11)
+                  .fontColor('#8A8A92')
+                  .margin({ top: 2 })
+                  .maxLines(1)
+                  .textOverflow({ overflow: TextOverflow.Ellipsis })
+              }
+              .alignItems(HorizontalAlign.Start)
+              .layoutWeight(1)
+              .margin({ left: 12 })
+
+              if (record.dir === this.lastMountDir) {
+                SymbolGlyph($r('sys.symbol.checkmark'))
+                  .fontSize(14)
+                  .fontColor(['#DDDDDD'])
+                  .margin({ right: 12 })
+              }
+            }
+            .layoutWeight(1)
+            .height(48)
+            .padding({ left: 16 })
+            .hoverEffect(HoverEffect.Highlight)
+            .onClick(() => {
+              this.selectMountTarget(record);
+            })
+
+            Column() {
+              SymbolGlyph($r('sys.symbol.xmark'))
+                .fontSize(13)
+                .fontColor(['#8A8A92'])
+            }
+            .width(40)
+            .height(48)
+            .justifyContent(FlexAlign.Center)
+            .hoverEffect(HoverEffect.Highlight)
+            .onClick(() => {
+              AppSettings.removeRecentMount(record.dir);
+            })
+          }
+          .width('100%')
+
+          if (index < this.recentMounts.length - 1) {
+            Divider()
+              .strokeWidth(0.5)
+              .color('#FFFFFF14')
+              .margin({ left: 48 })
+          }
+        }
+        .width('100%')
+      }, (record: MountRecord) => record.dir)
 
       Divider()
         .strokeWidth(0.5)

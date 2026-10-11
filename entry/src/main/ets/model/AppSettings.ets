@@ -2,6 +2,7 @@ import { preferences } from '@kit.ArkData';
 import { common } from '@kit.AbilityKit';
 import { BusinessError } from '@kit.BasicServicesKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
+import { MountRecord } from './MountFolder';
 
 const TAG: string = 'NextDOS';
 const STORE_NAME: string = 'nextdos_settings';
@@ -60,6 +61,13 @@ export class AppSettings {
   static blockSoftKeyboard: boolean = false;
   /** Last folder successfully mounted as C: ('' = none). */
   static lastMountDir: string = '';
+  /** Picker URI of lastMountDir whose persisted grant covers it ('' = none /
+   * legacy download-folder mount). Kept beside the path because the URI is
+   * what gets re-activated after an app restart (MountFolder.activateAccess). */
+  static lastMountUri: string = '';
+  /** Recent C: mount records, most recent first, capped at RECENT_MOUNT_MAX;
+   * the settings sheet lists them for choosing the auto-mount target. */
+  static recentMounts: MountRecord[] = [];
   /** Sandbox slot path of the last staged CD image ('' = none); the D:
    * [autoexec] mount line is written only while it is non-empty. */
   static lastCdImage: string = '';
@@ -88,6 +96,9 @@ export class AppSettings {
   static netDns: string = AppSettings.NET_DEFAULT_DNS;
 
   private static store: preferences.Preferences | null = null;
+
+  /** Size cap of the recent-mount MRU list (settings sheet 挂载记录). */
+  static readonly RECENT_MOUNT_MAX: number = 5;
 
   static readonly CPU_OPTIONS: CpuCycleOption[] = [
     new CpuCycleOption('max', '最大', '不限速，最快；老游戏可能跑得过快'),
@@ -130,6 +141,18 @@ export class AppSettings {
       const lastDir: preferences.ValueType = store.getSync('lastMountDir', AppSettings.lastMountDir);
       if (typeof lastDir === 'string') {
         AppSettings.lastMountDir = lastDir;
+      }
+      const lastUri: preferences.ValueType = store.getSync('lastMountUri', AppSettings.lastMountUri);
+      if (typeof lastUri === 'string') {
+        AppSettings.lastMountUri = lastUri;
+      }
+      // The MRU list rides two parallel newline-joined strings (paths and
+      // picker URIs) — no JSON, and neither value can ever contain a line
+      // break. Entries with no URI left simply restore with uri=''.
+      const mruDirs: preferences.ValueType = store.getSync('recentMountDirs', '');
+      const mruUris: preferences.ValueType = store.getSync('recentMountUris', '');
+      if (typeof mruDirs === 'string' && typeof mruUris === 'string') {
+        AppSettings.recentMounts = AppSettings.decodeMountRecords(mruDirs, mruUris);
       }
       const lastCd: preferences.ValueType = store.getSync('lastCdImage', AppSettings.lastCdImage);
       if (typeof lastCd === 'string') {
@@ -202,6 +225,68 @@ export class AppSettings {
     AppSettings.lastMountDir = value;
     AppStorage.setOrCreate('settings.lastMountDir', value);
     AppSettings.persist('lastMountDir', value);
+  }
+
+  static setLastMountUri(value: string): void {
+    AppSettings.lastMountUri = value;
+    AppStorage.setOrCreate('settings.lastMountUri', value);
+    AppSettings.persist('lastMountUri', value);
+  }
+
+  /** Moves (or inserts) the folder to the front of the recent-mount MRU,
+   * dropping a stale entry for the same path, and persists the list. The
+   * AppStorage value is always a fresh array: V1 state observation only
+   * fires on reassignment, never on in-place mutation. */
+  static recordMount(dir: string, uri: string): void {
+    const records: MountRecord[] = [new MountRecord(dir, uri)];
+    for (let i = 0; i < AppSettings.recentMounts.length &&
+      records.length < AppSettings.RECENT_MOUNT_MAX; i++) {
+      const record: MountRecord = AppSettings.recentMounts[i];
+      if (record.dir !== dir) {
+        records.push(record);
+      }
+    }
+    AppSettings.recentMounts = records;
+    AppStorage.setOrCreate('settings.recentMounts', records);
+    AppSettings.persistRecentMounts();
+  }
+
+  /** Drops one folder from the recent-mount MRU (settings sheet delete). */
+  static removeRecentMount(dir: string): void {
+    const records: MountRecord[] = [];
+    for (let i = 0; i < AppSettings.recentMounts.length; i++) {
+      const record: MountRecord = AppSettings.recentMounts[i];
+      if (record.dir !== dir) {
+        records.push(record);
+      }
+    }
+    AppSettings.recentMounts = records;
+    AppStorage.setOrCreate('settings.recentMounts', records);
+    AppSettings.persistRecentMounts();
+  }
+
+  private static decodeMountRecords(dirsJoined: string, urisJoined: string): MountRecord[] {
+    const dirs: string[] = dirsJoined.length > 0 ? dirsJoined.split('\n') : [];
+    const uris: string[] = urisJoined.length > 0 ? urisJoined.split('\n') : [];
+    const count: number = Math.min(dirs.length, uris.length);
+    const records: MountRecord[] = [];
+    for (let i = 0; i < count; i++) {
+      if (dirs[i] !== '') {
+        records.push(new MountRecord(dirs[i], uris[i]));
+      }
+    }
+    return records;
+  }
+
+  private static persistRecentMounts(): void {
+    const dirs: string[] = [];
+    const uris: string[] = [];
+    for (let i = 0; i < AppSettings.recentMounts.length; i++) {
+      dirs.push(AppSettings.recentMounts[i].dir);
+      uris.push(AppSettings.recentMounts[i].uri);
+    }
+    AppSettings.persist('recentMountDirs', dirs.join('\n'));
+    AppSettings.persist('recentMountUris', uris.join('\n'));
   }
 
   static setLastCdImage(value: string): void {
@@ -348,6 +433,8 @@ export class AppSettings {
     AppStorage.setOrCreate('settings.autoMount', AppSettings.autoMount);
     AppStorage.setOrCreate('settings.blockSoftKeyboard', AppSettings.blockSoftKeyboard);
     AppStorage.setOrCreate('settings.lastMountDir', AppSettings.lastMountDir);
+    AppStorage.setOrCreate('settings.lastMountUri', AppSettings.lastMountUri);
+    AppStorage.setOrCreate('settings.recentMounts', AppSettings.recentMounts);
     AppStorage.setOrCreate('settings.lastCdImage', AppSettings.lastCdImage);
     AppStorage.setOrCreate('settings.netNe2000', AppSettings.netNe2000);
     AppStorage.setOrCreate('settings.netTcpForwards', AppSettings.netTcpForwards);

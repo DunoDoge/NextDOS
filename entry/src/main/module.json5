@@ -11,12 +11,19 @@
     ],
     "deliveryWithInstall": true,
     "installationFree": false,
-    // system_grant app permission: declared only, no runtime dialog/ACL. The
-    // slirp NAT backend opens host sockets for the emulated NE2000 card, so
-    // the guest's outbound traffic needs INTERNET at the process level.
+    // system_grant app permissions: declared only, no runtime dialog/ACL.
+    // INTERNET: the slirp NAT backend opens host sockets for the emulated
+    // NE2000 card, so the guest's outbound traffic needs it at process level.
+    // FILE_ACCESS_PERSIST: fileShare.persistPermission/activatePermission of
+    // picker-picked C: mount folders (normal level, system_grant). Store
+    // builds additionally need this permission requested via AGC (受限权限
+    // 申请, auto-approved) so the signing profile carries its ACL entry.
     "requestPermissions": [
       {
         "name": "ohos.permission.INTERNET"
+      },
+      {
+        "name": "ohos.permission.FILE_ACCESS_PERSIST"
       }
     ],
     "pages": "$profile:main_pages",

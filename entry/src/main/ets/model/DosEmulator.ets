@@ -48,6 +48,11 @@ export class DosEmulator {
     this.confPath = ctx.filesDir + '/dosbox.conf';
     if (AppSettings.autoMount && AppSettings.lastMountDir !== '') {
       try {
+        // Picker grants persist but stay inactive across restarts: activate
+        // the recorded URI before probing the path. Legacy download-folder
+        // mounts record no URI and keep their original persistent grant,
+        // so they just skip this.
+        await MountFolder.activateAccess(AppSettings.lastMountUri);
         MountFolder.verifyAccess(AppSettings.lastMountDir);
         this.mountedFolder = AppSettings.lastMountDir;
       } catch (error) {
@@ -169,24 +174,38 @@ export class DosEmulator {
   }
 
   /**
-   * Mounts a host folder as the emulated C: drive by typing the DOS
-   * `mount` and `c:` commands into the RUNNING guest — no engine restart.
-   * The config file is still regenerated so a later engine restart re-mounts.
+   * Mounts a host folder as the emulated C: drive. Records the folder (path
+   * + picker URI) as the auto-mount target and into the recent-mount MRU,
+   * regenerates the config so later boots re-mount it, and applies the mount
+   * to a RUNNING guest by typing the DOS `mount` and `c:` commands — no
+   * engine restart. A path that is not printable ASCII takes the restart
+   * road instead: the injection cannot type it, and the engine's UTF-8
+   * autoexec passthrough patch (see NOTICE.md) is what lets the [autoexec]
+   * mount line carry it verbatim.
+   *
+   * Returns true when the engine was restarted to apply the mount.
    */
-  async mountFolder(dir: string): Promise<void> {
+  async mountFolder(dir: string, uri: string): Promise<boolean> {
     const wasRunning: boolean = this.running;
     this.mountedFolder = dir;
     AppSettings.setLastMountDir(dir);
+    AppSettings.setLastMountUri(uri);
+    AppSettings.recordMount(dir, uri);
     this.writeConfig();
     testNapi.mountFolder(dir);
     if (!wasRunning) {
       this.start();
-      return;
+      return false;
+    }
+    if (!MountFolder.isTypeable(dir)) {
+      this.reset();
+      return true;
     }
     await this.typeIntoGuest('mount c ' + dir + '\r');
     // Delay so the guest finishes the mount before the `c:` keystrokes arrive.
     await DosEmulator.sleepMs(300);
     await this.typeIntoGuest('c:\r');
+    return false;
   }
 
   /** Unmounts C: by typing `mount -u c` into the running guest. Only ends
