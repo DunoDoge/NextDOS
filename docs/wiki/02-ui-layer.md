@@ -28,7 +28,9 @@ UI 组件（`view/`）。
 ### 1.3 模块声明（[module.json5](../../entry/src/main/module.json5)）
 
 - `deviceTypes`：`phone` / `tablet` / `2in1`
-- `requestPermissions`：仅 `ohos.permission.INTERNET`（slirp NAT 打开主机 socket 需要）
+- `requestPermissions`：`ohos.permission.INTERNET`（slirp NAT 打开主机 socket 需要）+
+  `ohos.permission.FILE_ACCESS_PERSIST`（`fileShare` 对 picker 选中的挂载目录做授权持久化/激活；
+  上架需在 AGC 申请受限权限把 ACL 写入 Profile）
 - `metadata`：`appgallery_privacy_hosted` 及隐私声明链接（AGC 标准化隐私托管）
 - `abilities`：`EntryAbility`（`exported: true`，desktop skills）
 - `extensionAbilities`：`EntryBackupAbility`
@@ -101,14 +103,15 @@ boot()
 
 | 方法 | 说明 |
 | --- | --- |
-| `handleMountButton` | 已挂载→`unmountFolder`；否则经 `MountFolder.prepareMountDir` 取下载目录→校验→`mountFolder` |
+| `handleMountButton` | 已挂载→`unmountFolder`；否则 `MountFolder.pickMountFolder` 拉起系统文件夹选择器（任选可访问目录）→`verifyAccess`→`mountFolder`；非 ASCII 路径触发引擎重启时回读重置 `paused`。未 `booted` 时拒绝（与 CD 一致），取消选择静默返回 |
+| `handleMountLastButton` | 快捷菜单「挂载上次目录」一键重挂：`activateAccess` 重新激活持久化授权→`verifyAccess`→`mountFolder(lastMountDir, lastMountUri)`；失败提示重新选择 |
 | `handleCdButton` | 已挂载→`unmountCd` 后清槽；否则 `CdImage.pick` → `CdImage.stage` → `emu.mountCd`；失败时回滚并清理半拷贝文件 |
 
 ### 2.5 布局与关键 `@Builder`
 
 - `desktopTitleBar()`：2in1 自绘标题行（图标 + 名称 + 右侧符号按钮：暂停/重启/挂载目录/挂载光盘/设置），
   右侧留出系统三键宽度（`threeButtonWidth`）。
-- `quickMenu()`：触屏设备右上角齿轮的快捷菜单（暂停/继续、重启、挂载/卸载目录、挂载/卸载光盘、设置）。
+- `quickMenu()`：触屏设备右上角齿轮的快捷菜单（暂停/继续、重启、挂载/卸载目录、挂载上次目录〔仅未挂载且有记录时显示〕、挂载/卸载光盘、设置）。
 - `gearMenuButton()`：`bindPopup` 锚点，采用单向 `showMenu` + `onStateChange` 写回（遮罩关闭必须回写 `false`）。
 - `controlOverlay()`：底部悬浮控制层（展开=控制栏，收起=角落齿轮/键盘/展开按钮）；
   用 `HitTestMode.None` 让空白区域触摸落到画面（DOS 鼠标）上。
@@ -171,7 +174,7 @@ boot()
 
 | 分组 | 内容 |
 | --- | --- |
-| 模拟器 | CPU 速度（`CPU_OPTIONS` 预设）、静音、自动挂载 C:、禁用系统软键盘、重启模拟器 |
+| 模拟器 | CPU 速度（`CPU_OPTIONS` 预设）、静音、自动挂载 C:（副标题显示启动挂载目标）+ 挂载记录列表（`recentMounts` MRU，点选先激活授权并校验可达、失败提示且不改目标，再设为启动挂载目标；xmark 删除；行内删除按钮与可点区域是兄弟节点，因 `ClickEvent` 无 `stopPropagation`）、禁用系统软键盘、重启模拟器 |
 | 网络 | 网卡（NE2000）、TCP/UDP 端口转发、IPX 联机 |
 | 网卡参数（虚拟 NAT） | IP / 子网掩码 / 网关 / DNS（`resolvedNetworkParams()` 兜底） |
 | 关于 | 应用版本、项目仓库、反馈邮箱（mailto Want）、隐私政策、开源许可（`bindContentCover` 打开 `LicenseSheet`） |
