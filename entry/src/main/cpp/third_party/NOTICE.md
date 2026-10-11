@@ -94,6 +94,20 @@
   carried a misaligned offset into the Rn field, so the block-entry
   `cache.block.running` store executed as `str x12, [x4, #912]` with x4=0
   and segfaulted the first dynrec block ever run.
+- UTF-8 autoexec passthrough patch (local patch in
+  `src/misc/unicode.h`/`src/misc/unicode.cpp`/`src/shell/autoexec.cpp`,
+  not yet a commit on the fork's `ohos` branch): adds
+  `UnicodeFallback::Utf8Passthrough` — graphemes the DOS code page cannot
+  represent keep their original UTF-8 bytes instead of collapsing into the
+  box fallback — and uses it when materializing `AUTOEXEC.BAT`. The DOS
+  shell converts command lines into the loaded DOS code page, and no
+  loadable code page can represent CJK characters, so a UTF-8 host path in
+  an `[autoexec]` `mount c <dir>` line reached MOUNT as `?` boxes and the
+  mount failed (`Can't create drive from file`). With the passthrough the
+  host path bytes survive to `MOUNT::ProcessPaths`'s `stat()` and the
+  mount succeeds; the DOS display merely shows garbage for the passthrough
+  bytes. Needed by the app-side mount-folder feature (any user-picked
+  directory, Chinese names included).
 - License: **GPL-2.0-or-later.** Linking DOSBox Staging into NextDOS makes
   the combined work subject to the GNU GPL v2 (or later). Distributing the
   application therefore requires shipping the corresponding source code of

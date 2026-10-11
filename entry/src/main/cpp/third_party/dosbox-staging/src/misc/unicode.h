@@ -29,7 +29,14 @@ enum class UnicodeFallback {
 	// (tables) which are consistent; for example, if code page contains
 	// character '╠', but not '╣', both will be replaced with a fallback
 	// character ('║' for example)
-	Box
+	Box,
+
+	// Convert whatever the DOS code page can represent and keep the
+	// original UTF-8 bytes of every other grapheme. Meant for materializing
+	// AUTOEXEC.BAT: the host path arguments of commands like MOUNT must
+	// reach the host OS unchanged, as no DOS code page can represent
+	// non-Latin host directory names (NextDOS local patch)
+	Utf8Passthrough
 };
 
 // Specifies how to interpret characters 0x00-0x1f and 0x7f in DOS strings

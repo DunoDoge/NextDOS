@@ -209,10 +209,14 @@ static void create_autoexec_bat_bin(const uint16_t code_page)
 {
 	assert(autoexec_bat_utf8);
 
-	// Convert UTF-8 AUTOEXEC.BAT to DOS code page
+	// Convert UTF-8 AUTOEXEC.BAT to DOS code page. Utf8Passthrough keeps the
+	// original UTF-8 bytes of characters the code page can't represent, so
+	// host path arguments (MOUNT with a non-Latin directory name) reach the
+	// host OS unchanged instead of collapsing into fallback boxes; the DOS
+	// display merely shows garbage for them (NextDOS local patch)
 	const auto autoexec_bat_dos = utf8_to_dos(*autoexec_bat_utf8,
 	                                          DosStringConvertMode::WithControlCodes,
-	                                          UnicodeFallback::Box,
+	                                          UnicodeFallback::Utf8Passthrough,
 	                                          code_page);
 
 	// Convert the result to a binary format

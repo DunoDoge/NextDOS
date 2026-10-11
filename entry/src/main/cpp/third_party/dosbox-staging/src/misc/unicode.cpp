@@ -761,6 +761,29 @@ static std::string wide_to_dos(const std::u32string& str,
 			return false;
 		}
 
+		if (fallback == UnicodeFallback::Utf8Passthrough) {
+			// Keep the original character as UTF-8: consumers that pass the
+			// string to the host OS (MOUNT with a host path argument) need
+			// the real bytes, the DOS display just shows garbage for them
+			const auto code_point_u32 = static_cast<uint32_t>(code_point);
+			if (code_point_u32 < 0x80) {
+				str_out.push_back(static_cast<char>(code_point_u32));
+			} else if (code_point_u32 < 0x800) {
+				str_out.push_back(static_cast<char>(0xc0 | (code_point_u32 >> 6)));
+				str_out.push_back(static_cast<char>(0x80 | (code_point_u32 & 0x3f)));
+			} else if (code_point_u32 < 0x10000) {
+				str_out.push_back(static_cast<char>(0xe0 | (code_point_u32 >> 12)));
+				str_out.push_back(static_cast<char>(0x80 | ((code_point_u32 >> 6) & 0x3f)));
+				str_out.push_back(static_cast<char>(0x80 | (code_point_u32 & 0x3f)));
+			} else {
+				str_out.push_back(static_cast<char>(0xf0 | (code_point_u32 >> 18)));
+				str_out.push_back(static_cast<char>(0x80 | ((code_point_u32 >> 12) & 0x3f)));
+				str_out.push_back(static_cast<char>(0x80 | ((code_point_u32 >> 6) & 0x3f)));
+				str_out.push_back(static_cast<char>(0x80 | (code_point_u32 & 0x3f)));
+			}
+			return true;
+		}
+
 		str_out.push_back(static_cast<char>(UnknownCharacter));
 		warn_code_point(code_point);
 		return true;
@@ -773,6 +796,7 @@ static std::string wide_to_dos(const std::u32string& str,
 			return push_7bit(grapheme) ||
 			       push_code_page(mapping_normalized, grapheme);
 		case UnicodeFallback::Simple:
+		case UnicodeFallback::Utf8Passthrough:
 			return push_7bit(grapheme) ||
 			       push_code_page(mapping_normalized, grapheme) ||
 			       push_code_page(aliases_normalized, grapheme) ||
@@ -799,6 +823,7 @@ static std::string wide_to_dos(const std::u32string& str,
 			return push_code_page(mapping_decomposed, decomposed);
 		case UnicodeFallback::Simple:
 		case UnicodeFallback::Box:
+		case UnicodeFallback::Utf8Passthrough:
 			return push_code_page(mapping_decomposed, decomposed) ||
 			       push_code_page(aliases_decomposed, decomposed);
 		default: assert(false); return false;
