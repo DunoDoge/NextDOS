@@ -108,6 +108,15 @@
   mount succeeds; the DOS display merely shows garbage for the passthrough
   bytes. Needed by the app-side mount-folder feature (any user-picked
   directory, Chinese names included).
+- Empty-cue-parse guard (local patch in `src/dos/cdrom_image.cpp`,
+  not yet a commit on the fork's `ohos` branch): `LoadCueSheet` returns
+  false before the final unconditional `AddTrack` when no TRACK line was
+  parsed (`!canAddTrack || track.number == 0`). A 0-byte cue file getline's
+  straight to EOF with every line empty, so the parse "succeeded" and the
+  `AddTrack` first-track assert (`curr.number == 1` with number 0) aborted
+  the whole embed process; the guard makes `SetDevice` fall through to
+  `LoadIsoFile`, which rejects the file gracefully. Needed because a guest
+  `mount d <slot> -t iso` of an empty image killed the app on the spot.
 - License: **GPL-2.0-or-later.** Linking DOSBox Staging into NextDOS makes
   the combined work subject to the GNU GPL v2 (or later). Distributing the
   application therefore requires shipping the corresponding source code of

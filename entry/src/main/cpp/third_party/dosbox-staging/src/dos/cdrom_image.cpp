@@ -1558,6 +1558,13 @@ bool CDROM_Interface_Image::LoadCueSheet(const char *cuefile)
 			return false;
 		}
 	}
+	// A 0-byte cue file getline's straight to EOF with no TRACK parsed, and
+	// the AddTrack below then aborts on the first-track assert (track
+	// number 0). Fail the parse here so SetDevice falls through to
+	// LoadIsoFile's graceful rejection.
+	if (!canAddTrack || track.number == 0) {
+		return false;
+	}
 	// add last track
 	if (!AddTrack(track, shift, prestart, totalPregap, currPregap)) {
 		return false;
