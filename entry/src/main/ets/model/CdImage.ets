@@ -106,6 +106,45 @@ export class CdImage {
     throw new Error('槽位文件不存在: ' + path);
   }
 
+  /** Throws when the persisted slot image would not survive a guest
+   * `mount d ... -t iso`: empty file, a cue whose siblings are gone, or a
+   * binary without an ISO9660 PVD (the engine's -t iso loader is exactly
+   * PVD-probing, so a missed probe is a guaranteed in-guest rejection).
+   * Boot restore runs this before writing the [autoexec] line; cue sheets
+   * get no PVD check because the engine loads their tracks byte-wise. */
+  static verifySlotMountable(path: string): void {
+    CdImage.verifySlot(path);
+    if (fs.statSync(path).size === 0) {
+      throw new Error('镜像文件为空');
+    }
+    const lower: string = path.toLowerCase();
+    if (lower.endsWith('.cue')) {
+      CdImage.verifyCueSlot(path);
+    } else if (!CdImage.probePvd(path)) {
+      throw new Error('镜像不含有效的 ISO9660 卷描述符');
+    }
+  }
+
+  /** Cue slot self-containment: every FILE entry the staged sheet
+   * references must still exist as a sibling in the same directory, or the
+   * in-guest mount fails with no app-side signal. */
+  private static verifyCueSlot(slotCuePath: string): void {
+    const slotDir: string = slotCuePath.substring(0, slotCuePath.lastIndexOf('/'));
+    const fileNames: string[] = CdImage.parseCueFileNames(CdImage.readAndDecodeCue(slotCuePath));
+    if (fileNames.length === 0) {
+      throw new Error('槽位 cue 未引用任何音轨文件');
+    }
+    for (let i = 0; i < fileNames.length; i++) {
+      const fileName: string = fileNames[i];
+      if (fileName.indexOf('/') >= 0 || fileName.indexOf('\\') >= 0) {
+        throw new Error('槽位 cue 引用了子目录音轨文件（' + fileName + '）');
+      }
+      if (!fs.accessSync(slotDir + '/' + fileName)) {
+        throw new Error('槽位缺少 cue 引用的音轨文件 ' + fileName);
+      }
+    }
+  }
+
   /** Deletes every staged file and the slot directory. Only call this
    * after the unmount keystrokes finished injecting: the slot must stop
    * existing no earlier than D: disappears from the guest. */
@@ -132,12 +171,18 @@ export class CdImage {
 
   /** Copies the image into the slot and sniffs the ISO9660 PVD on the copy.
    * The sniff is a toast hint only: it never blocks the mount, the engine
-   * keeps the final word (and also accepts layouts this probe skips). */
+   * keeps the final word (and also accepts layouts this probe skips).
+   * A 0-byte file is rejected before the copy: its cue parse reads one empty
+   * line and would otherwise hand the engine an AddTrack that trips the
+   * first-track assert and aborts the process. */
   private static async stageBinary(uri: string, name: string, slotDir: string): Promise<CdStaged> {
     const lower: string = name.toLowerCase();
     const slotPath: string = slotDir + '/cdrom' + lower.substring(lower.lastIndexOf('.'));
     const src = fs.openSync(uri, fs.OpenMode.READ_ONLY);
     try {
+      if (fs.statSync(src.fd).size === 0) {
+        throw new Error('镜像文件为空，请选择有效的光盘镜像文件');
+      }
       await fs.copyFile(src.fd, slotPath);
     } finally {
       fs.closeSync(src);

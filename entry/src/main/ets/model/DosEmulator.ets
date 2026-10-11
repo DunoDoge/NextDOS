@@ -41,8 +41,12 @@ export class DosEmulator {
    * The DOSBox resource tree is deployed natively from rawfile (see
    * ohos_resources.cpp). Settings must load before the config generator
    * reads them; auto-mount restores the last session's folder through the
-   * [autoexec] mount and boots unmounted when the folder went away. */
-  async bootstrap(ctx: common.UIAbilityContext): Promise<void> {
+   * [autoexec] mount and boots unmounted when the folder went away. The
+   * persisted CD entry is restored only when the slot image still looks
+   * loadable; otherwise the record is cleared, the slot wiped and a user
+   * facing warning returned for the caller to toast. Returns the warning
+   * ('' = nothing to report). */
+  async bootstrap(ctx: common.UIAbilityContext): Promise<string> {
     await AppSettings.load(ctx);
     await this.copyRawFile(ctx, 'fd.img');
     this.confPath = ctx.filesDir + '/dosbox.conf';
@@ -60,20 +64,31 @@ export class DosEmulator {
         hilog.warn(0x0000, TAG, 'auto-mount skipped, folder gone: %{public}s', err.message);
       }
     }
+    let bootWarning: string = '';
     if (AppSettings.lastCdImage !== '') {
       try {
-        CdImage.verifySlot(AppSettings.lastCdImage);
+        CdImage.verifySlotMountable(AppSettings.lastCdImage);
         this.cdImagePath = AppSettings.lastCdImage;
       } catch (error) {
         const err = error as BusinessError;
         AppSettings.setLastCdImage('');
-        hilog.warn(0x0000, TAG, 'cd slot gone, persisted entry cleared: %{public}s', err.message);
+        try {
+          CdImage.clearSlot(ctx);
+        } catch (cleanError) {
+          // Best-effort wipe: a missing slot dir (record points at cleared
+          // data) lands here too, so it is not an error.
+          const cleanErr = cleanError as BusinessError;
+          hilog.warn(0x0000, TAG, 'cd slot cleanup failed: %{public}s', cleanErr.message);
+        }
+        bootWarning = '上次挂载的光盘镜像不可用，已清除挂载记录';
+        hilog.warn(0x0000, TAG, 'cd slot unmountable, persisted entry cleared: %{public}s', err.message);
       }
     }
     this.writeConfig();
     testNapi.initResources(ctx.resourceManager);
     testNapi.init(this.confPath);
     hilog.info(0x0000, TAG, 'emulator initialized: %{public}s', this.confPath);
+    return bootWarning;
   }
 
   private async copyRawFile(ctx: common.UIAbilityContext, name: string): Promise<void> {
