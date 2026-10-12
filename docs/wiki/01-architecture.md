@@ -34,7 +34,7 @@ C++ 侧用一个「平台层」替换 DOSBox Staging 原本依赖 SDL 窗口/音
                 │ import testNapi from 'libentry.so'
 ┌──────────────────────────────────────────────────────────────────────┐
 │ ③ NAPI 桥接  entry/src/main/cpp/napi_init.cpp                         │
-│   模块名 "entry"，导出 init / start / stop / getFrame / injectKey …   │
+│   模块名 "entry"，导出 init / start / stop / getFrameSeq / getFrame … │
 └──────────────────────────────────────────────────────────────────────┘
                 ▲
                 │ 直接 C++ 调用
@@ -72,7 +72,7 @@ DOSBox 初始化与主循环。UI 线程与引擎线程通过「帧快照 + 事�
 
 | 线程 | 主要工作 | 代码位置 |
 | --- | --- | --- |
-| ArkTS UI 线程（主线程） | UI 渲染、手势识别、每 16 ms 轮询 `getFrame()`、注入输入、读写配置 | `Index.ets`、`EmulatorScreen.ets`、`DosEmulator.tick()` |
+| ArkTS UI 线程（主线程） | UI 渲染、手势识别、每 16 ms 轮询 `getFrameSeq()`（变化才 `getFrame()`）、注入输入、读写配置 | `Index.ets`、`EmulatorScreen.ets`、`DosEmulator.tick()` |
 | 引擎线程 | 运行 `embed_main()`：模块初始化 → GUI → mapper → shell 主循环 | `ohos_host.cpp` `thread_main()` |
 | SDL 事件处理 | `GFX_PollAndHandleEvents()` 在引擎线程内轮询 SDL 队列 | `ohos_gui.cpp` |
 | OHAudio 回调线程 | 系统回调 `onWriteData()`，从混音器队列取帧 | `ohos_audio.cpp` |
@@ -103,10 +103,11 @@ DOSBox 初始化与主循环。UI 线程与引擎线程通过「帧快照 + 事�
 ─────────                                 ────────────────────
 GFX_StartUpdate(pixels,pitch)
   → OhosRenderBackend::StartFrame          setInterval(tick)
-GFX_EndUpdate()                              → getFrame()
-  → EndFrame() 置 frame_pending_               → GetFrameSnapshot()
-GFX_MaybePresentFrame() / PrepareFrame()       → 拷贝 BGRA 快照
-  → PublishFrame() 加锁写快照                   → 若 seq 变化 → onFrame()
+GFX_EndUpdate()                              → getFrameSeq()（零拷贝轮询）
+  → EndFrame() 置 frame_pending_             → seq 变化时 getFrame()
+GFX_MaybePresentFrame() / PrepareFrame()       → GetFrameSnapshot()
+  → PublishFrame() 加锁写快照                   → 拷贝 BGRA 快照
+                                               → onFrame()
                                                           → EmulatorScreen.updateFrame()
                                                           → PixelMap.writeBufferToPixelsSync()
                                                           → Canvas.drawImage()

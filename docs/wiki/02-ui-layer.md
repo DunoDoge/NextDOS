@@ -154,6 +154,10 @@ boot()
   | 滚轮/触控板轴事件 | `onAxisEvent`，15°/格 |
 
 - **物理鼠标**：`handleMouse`（Hover/Move/Press/Release），相对增量按密度换算为物理像素。
+- **触摸即时反馈**：首指按下（`handleTouchDown`）在触点画一个白色圆环
+  （`showTouchRipple`，240ms 放大淡出，`HitTestMode.None` 不参与命中）。guest 只在画面
+  变化时重绘（空闲 DOS 提示符只有光标闪烁节奏），没有应用侧响应帧的话点按会数百毫秒
+  无视觉回应——上架检测的「点击操作响应时延」度量的正是这个。纯装饰，不参与手势分类。
 - **画布尺寸**：`onAreaChange` 上报 `setCanvasSize()`，并做一次 100ms 后的延迟重绘以拾取异步刷新的 draw rect。
 
 ### 3.2 `ControlKeyBar`（[ControlKeyBar.ets](../../entry/src/main/ets/view/ControlKeyBar.ets)）

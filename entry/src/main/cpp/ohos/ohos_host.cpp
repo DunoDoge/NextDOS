@@ -365,6 +365,11 @@ bool video_get_frame(uint8_t* dst, int dst_capacity, int* width_out,
 	return true;
 }
 
+uint32_t video_get_frame_seq()
+{
+	return OhosRenderBackend::GetFrameSeq();
+}
+
 void video_set_canvas_size(int width, int height)
 {
 	OhosRenderBackend::SetHostCanvasSize(width, height);

@@ -261,3 +261,9 @@ bool OhosRenderBackend::GetFrameSnapshot(uint8_t* dst, int dst_capacity,
 	height_out = snapshot_height_;
 	return true;
 }
+
+uint32_t OhosRenderBackend::GetFrameSeq()
+{
+	std::lock_guard<std::mutex> lock(snapshot_mutex_);
+	return snapshot_seq_;
+}

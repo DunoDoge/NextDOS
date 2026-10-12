@@ -42,6 +42,14 @@ const MOMENTUM_STOP_V: number = 0.02;
 // Physical wheel / touchpad axis events report degrees per change; the
 // standard wheel detent is 15 degrees per notch.
 const WHEEL_DEG_PER_NOTCH: number = 15;
+// Touch-down indicator: a ring at the touch point that expands and fades
+// within a fraction of a second. The guest only repaints when its content
+// changes (an idle DOS prompt redraws at cursor-blink pace), so without an
+// app-side response frame a canvas tap stays visually unanswered for
+// hundreds of milliseconds; store review measures that as click response
+// latency. Fires on touch Down, purely decorative: no gesture semantics.
+const RIPPLE_SIZE_VP: number = 34;
+const RIPPLE_FADE_MS: number = 240;
 
 /**
  * Touch gesture mode: an explicit replacement for the implicit
@@ -173,6 +181,12 @@ export struct EmulatorScreen {
   // host-window pixels, so without this a high-density phone would feed the
   // PS/2-style path mickeys scaled down by the density.
   private densityPx: number = 1;
+  // --- touch-down indicator (see RIPPLE_* constants): the ring center in
+  // component vp space plus its animated alpha/scale. alpha 0 = idle. ---
+  @State rippleX: number = 0;
+  @State rippleY: number = 0;
+  @State rippleAlpha: number = 0;
+  @State rippleScale: number = 1;
 
   aboutToAppear(): void {
     try {
@@ -214,6 +228,29 @@ export struct EmulatorScreen {
       pm.release();
       this.pixelMap = undefined;
     }
+  }
+
+  /**
+   * Immediate touch-down feedback ring. Two animateTo scopes in sequence:
+   * the first snaps the ring to the touch point with no animation, the
+   * second fades it out — a plain .animation() attribute cannot re-arm on
+   * repeated touches because same-value state changes never restart it.
+   */
+  private showTouchRipple(x: number, y: number): void {
+    const ui = this.getUIContext();
+    ui.animateTo({ duration: 0 }, () => {
+      this.rippleX = x;
+      this.rippleY = y;
+      this.rippleAlpha = 0.35;
+      this.rippleScale = 0.55;
+    });
+    ui.animateTo({
+      duration: RIPPLE_FADE_MS,
+      curve: Curve.EaseOut
+    }, () => {
+      this.rippleAlpha = 0;
+      this.rippleScale = 1.15;
+    });
   }
 
   private updateFrame(f: FrameInfo): void {
@@ -409,6 +446,7 @@ export struct EmulatorScreen {
       this.lastTouchX = t.x;
       this.lastTouchY = t.y;
       this.injectMove(t.x, t.y, 0, 0);
+      this.showTouchRipple(t.x, t.y);
       // Double-tap candidate: this press lands inside the window and the
       // slop of the last clean tap. The two clicks themselves were already
       // injected as their taps lifted — arming here only decides how a
@@ -808,36 +846,58 @@ export struct EmulatorScreen {
   }
 
   build() {
-    Canvas(this.ctx)
-      .width('100%')
-      .height('100%')
-      .backgroundColor('#000000')
-      .onAreaChange((oldArea: Area, newArea: Area): void => {
-        this.canvasW = Number(newArea.width);
-        this.canvasH = Number(newArea.height);
-        // Report the canvas size so the engine refits its PAR-corrected
-        // draw rect in the same vp space. The refit runs asynchronously on
-        // the engine thread and an idle guest (DosRate) may emit no frame
-        // to carry the refreshed layout, so a one-shot delayed redraw
-        // picks the new rect up without waiting for frames.
-        this.emu.setCanvasSize(Number(newArea.width), Number(newArea.height));
-        this.redraw();
-        if (this.canvasRefitTimer !== -1) {
-          clearTimeout(this.canvasRefitTimer);
-        }
-        this.canvasRefitTimer = setTimeout(() => {
-          this.canvasRefitTimer = -1;
+    Stack() {
+      Canvas(this.ctx)
+        .width('100%')
+        .height('100%')
+        .backgroundColor('#000000')
+        .onAreaChange((oldArea: Area, newArea: Area): void => {
+          this.canvasW = Number(newArea.width);
+          this.canvasH = Number(newArea.height);
+          // Report the canvas size so the engine refits its PAR-corrected
+          // draw rect in the same vp space. The refit runs asynchronously on
+          // the engine thread and an idle guest (DosRate) may emit no frame
+          // to carry the refreshed layout, so a one-shot delayed redraw
+          // picks the new rect up without waiting for frames.
+          this.emu.setCanvasSize(Number(newArea.width), Number(newArea.height));
           this.redraw();
-        }, 100);
-      })
-      .onTouch((event: TouchEvent): void => {
-        this.handleTouch(event);
-      })
-      .onAxisEvent((event: AxisEvent): void => {
-        this.handleAxis(event);
-      })
-      .onMouse((event: MouseEvent): void => {
-        this.handleMouse(event);
-      })
+          if (this.canvasRefitTimer !== -1) {
+            clearTimeout(this.canvasRefitTimer);
+          }
+          this.canvasRefitTimer = setTimeout(() => {
+            this.canvasRefitTimer = -1;
+            this.redraw();
+          }, 100);
+        })
+        .onTouch((event: TouchEvent): void => {
+          this.handleTouch(event);
+        })
+        .onAxisEvent((event: AxisEvent): void => {
+          this.handleAxis(event);
+        })
+        .onMouse((event: MouseEvent): void => {
+          this.handleMouse(event);
+        })
+
+      // Touch-down indicator ring (see RIPPLE_* constants): floats over the
+      // canvas, never hit-testable, invisible while idle. The Stack and the
+      // Canvas share their origin, so the component-space touch coordinates
+      // position the ring directly.
+      Circle()
+        .width(RIPPLE_SIZE_VP)
+        .height(RIPPLE_SIZE_VP)
+        .fill(Color.Transparent)
+        .stroke('#FFFFFF')
+        .strokeWidth(2)
+        .opacity(this.rippleAlpha)
+        .scale({ x: this.rippleScale, y: this.rippleScale })
+        .position({
+          x: this.rippleX - RIPPLE_SIZE_VP / 2,
+          y: this.rippleY - RIPPLE_SIZE_VP / 2
+        })
+        .hitTestBehavior(HitTestMode.None)
+    }
+    .width('100%')
+    .height('100%')
   }
 }

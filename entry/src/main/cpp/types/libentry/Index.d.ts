@@ -45,6 +45,8 @@ export const injectKey: (keyCode: number, down: boolean, shift?: boolean) => voi
 /** action: 0=move, 1=button (1/2/3 down, +4 up), 2=wheel (relY = notches, positive = scroll down; x/y unused). x/y in frame pixel space; relX/relY deltas. */
 export const injectMouse: (action: number, button: number, x: number, y: number, relX: number, relY: number) => void;
 export const getFrame: () => FrameInfo;
+/** Seq of the latest published frame (0 = nothing yet); zero-copy poll so the frame loop can skip getFrame() while the guest screen is static. */
+export const getFrameSeq: () => number;
 export const getStatus: () => EmulatorStatus;
 /** Reports the ArkTS canvas size (vp) so the engine refits its aspect-corrected draw rect; safe before boot (no-op notification). */
 export const setCanvasSize: (width: number, height: number) => void;

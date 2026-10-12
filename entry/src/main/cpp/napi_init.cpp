@@ -19,6 +19,7 @@
  *   injectKey(keyCode: number, down: boolean): void
  *   injectMouse(action, button, x, y, relX, relY): void  // action 0=move 1=button 2=wheel (relY notches, + = down; x/y unused)
  *   getFrame(): FrameInfo                     // { seq, width, height, mode, buffer } BGRA
+ *   getFrameSeq(): number                      // seq of the latest frame, no copy (idle-screen poll)
  *   getStatus(): EmulatorStatus               // { running, paused }
  *   setCanvasSize(width: number, height: number): void // canvas size in vp; engine refits its draw rect
  *   getMouseLayout(): MouseLayout             // { offsetX, offsetY, drawW, drawH, renderW, renderH, valid }
@@ -297,6 +298,19 @@ static napi_value GetFrame(napi_env env, napi_callback_info info)
     return obj;
 }
 
+/* ---------- getFrameSeq(): number ---------- */
+/* Cheap idle-screen poll for the frame loop: getFrame() copies the whole
+ * frame into a fresh ArrayBuffer on the UI thread, so only a changed seq
+ * should pay it. Returns 0 until the first frame is published. */
+static napi_value GetFrameSeq(napi_env env, napi_callback_info info)
+{
+    (void)info;
+
+    napi_value result;
+    napi_create_uint32(env, nextdos::video_get_frame_seq(), &result);
+    return result;
+}
+
 /* ---------- getStatus(): EmulatorStatus ---------- */
 static napi_value GetStatus(napi_env env, napi_callback_info info)
 {
@@ -381,6 +395,7 @@ static napi_value ModuleInit(napi_env env, napi_value exports)
         { "injectKey", nullptr, InjectKey, nullptr, nullptr, nullptr, napi_default, nullptr },
         { "injectMouse", nullptr, InjectMouse, nullptr, nullptr, nullptr, napi_default, nullptr },
         { "getFrame", nullptr, GetFrame, nullptr, nullptr, nullptr, napi_default, nullptr },
+        { "getFrameSeq", nullptr, GetFrameSeq, nullptr, nullptr, nullptr, napi_default, nullptr },
         { "getStatus", nullptr, GetStatus, nullptr, nullptr, nullptr, napi_default, nullptr },
         { "setCanvasSize", nullptr, SetCanvasSize, nullptr, nullptr, nullptr, napi_default, nullptr },
         { "getMouseLayout", nullptr, GetMouseLayout, nullptr, nullptr, nullptr, napi_default, nullptr },

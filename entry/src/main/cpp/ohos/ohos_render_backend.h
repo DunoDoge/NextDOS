@@ -64,6 +64,13 @@ public:
 	                             int& width_out, int& height_out,
 	                             uint32_t& seq_out);
 
+	// Sequence number of the latest published frame (0 = nothing yet).
+	// Zero-copy poll for the ArkTS frame loop: getFrame() moves a full
+	// megabyte-class buffer through two memcpys and an ArrayBuffer
+	// allocation on the UI thread, so a static guest screen must not pay
+	// that on every 16 ms tick.
+	static uint32_t GetFrameSeq();
+
 	// --- consumer-side canvas info (set from the NAPI thread) ---
 	static void SetHostCanvasSize(int width, int height);
 

@@ -44,6 +44,11 @@ bool host_is_paused();
 bool video_get_frame(uint8_t* dst, int dst_capacity, int* width_out,
                      int* height_out, uint32_t* seq_out);
 
+// Sequence number of the latest published frame (0 = nothing yet); a
+// zero-copy poll so the frame loop can skip video_get_frame() while the
+// guest screen is static.
+uint32_t video_get_frame_seq();
+
 // Sets the host canvas size (in pixels) used for draw-rect computation.
 void video_set_canvas_size(int width, int height);
 

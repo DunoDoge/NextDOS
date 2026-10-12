@@ -383,15 +383,22 @@ export class DosEmulator {
     if (!this.running) {
       return;
     }
+    // Cheap poll first: getFrame() copies the whole BGRA frame and
+    // allocates a matching ArrayBuffer on this (UI) thread, so a static
+    // guest screen must not pay that every 16 ms — the constant
+    // main-thread work and GC churn inflate click/touch response latency.
+    if (testNapi.getFrameSeq() === this.lastSeq) {
+      return;
+    }
+    // No re-check needed: the snapshot seq only grows, so any frame fetched
+    // after a changed poll is newer than the last forwarded one.
     const frame: FrameInfo = testNapi.getFrame();
-    if (frame.seq !== this.lastSeq) {
-      this.lastSeq = frame.seq;
-      this.onFrame(frame);
-      this.tickCount++;
-      if (this.tickCount % 600 === 0) {
-        hilog.info(0x0000, TAG, 'tick seq=%{public}d w=%{public}d h=%{public}d mode=%{public}d bytes=%{public}d',
-          frame.seq, frame.width, frame.height, frame.mode, frame.buffer.byteLength);
-      }
+    this.lastSeq = frame.seq;
+    this.onFrame(frame);
+    this.tickCount++;
+    if (this.tickCount % 600 === 0) {
+      hilog.info(0x0000, TAG, 'tick seq=%{public}d w=%{public}d h=%{public}d mode=%{public}d bytes=%{public}d',
+        frame.seq, frame.width, frame.height, frame.mode, frame.buffer.byteLength);
     }
   }
 

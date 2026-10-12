@@ -72,7 +72,7 @@
 | 方法 | 说明 |
 | --- | --- |
 | `startFrameLoop()` / `stopFrameLoop()` | `setInterval` 每 16ms（`FRAME_INTERVAL_MS`）调用 `tick()` |
-| `tick()` | `getFrame()`，`seq` 变化时触发 `onFrame` |
+| `tick()` | 先 `getFrameSeq()` 零拷贝轮询，seq 变化才 `getFrame()` 取整帧并触发 `onFrame`（静止画面不付拷贝/分配开销） |
 | `injectKey` / `injectMouse` | 运行中转发到 NAPI（`injectMouse` action：0=move/1=button/2=wheel） |
 | `setCanvasSize` / `getMouseLayout` | 上报画布尺寸 / 读取引擎鼠标布局 |
 | `typeIntoGuest(text)` | 串行化的文本注入；`typeChars` 逐字符映射（`charToKeyCode`/`needsShift`），大写与符号用 Shift down/up 包裹 |

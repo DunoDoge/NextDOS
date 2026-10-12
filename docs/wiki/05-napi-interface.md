@@ -45,6 +45,7 @@ extern "C" __attribute__((constructor)) void RegisterEntryModule(void)
 | `injectKey` | `InjectKey` | `keyCode: number, down: boolean, shift?: boolean` | `void` | `nextdos::input_inject_key(keyCode, down, shift, false, false)` |
 | `injectMouse` | `InjectMouse` | `action, button, x, y, relX, relY`（6 参） | `void` | `nextdos::input_inject_mouse(...)`；`action` 0=移动 1=按键 2=滚轮 |
 | `getFrame` | `GetFrame` | — | `FrameInfo` | `nextdos::video_get_frame(...)` → 组 `ArrayBuffer` |
+| `getFrameSeq` | `GetFrameSeq` | — | `number` | `nextdos::video_get_frame_seq()`：最新帧 seq（0 = 尚无帧），零拷贝轮询 |
 | `getStatus` | `GetStatus` | — | `EmulatorStatus` | `host_is_running()` + `host_is_paused()` |
 | `setCanvasSize` | `SetCanvasSize` | `width: number, height: number` | `void` | `nextdos::video_set_canvas_size(...)`（vp 尺寸，引导引擎重算 draw rect） |
 | `getMouseLayout` | `GetMouseLayout` | — | `MouseLayout` | `ohos_get_mouse_layout(...)` |
@@ -80,6 +81,10 @@ interface FrameInfo {
 - 未取到帧时 `byteLength=0`、`width/height/seq` 保持 0；
 - 每次调用都**新建** `ArrayBuffer` 并 `memcpy`（跨线程快照，不共享原生内存）。
 
+因此帧循环（`DosEmulator.tick`）先调 `getFrameSeq()` 做零拷贝轮询，seq 未变化
+（guest 画面静止）时**不得**调用 `getFrame()`——整帧拷贝 + ArrayBuffer 分配发生在
+UI 线程，空闲时的持续负载会推高点击/触摸响应时延（上架检测项）。
+
 ### `EmulatorStatus`
 
 ```ts
@@ -114,7 +119,7 @@ ArkTS Startup
   ├─ entry.init(configPath)                // 占位
   ├─ entry.start(configPath)               // 派生引擎线程（异步返回）
   │     └─ 引擎线程: 部署资源 -> embed_main -> SHELL_InitAndRun（阻塞）
-  ├─ [16ms 帧循环] entry.getFrame()         // 拉取最新快照
+  ├─ [16ms 帧循环] entry.getFrameSeq()        // 零拷贝轮询；变化时才 getFrame()
   │                entry.getStatus()        // running/paused
   ├─ entry.setCanvasSize(w, h)             // 布局变化时
   ├─ entry.getMouseLayout()                // 坐标反算
@@ -131,7 +136,7 @@ ArkTS Startup
 
 | ArkTS 调用点 | 使用的导出 |
 | --- | --- |
-| [DosEmulator.ets](../../entry/src/main/ets/model/DosEmulator.ets) | `initResources` / `init` / `start` / `stop` / `reset` / `pause` / `resume` / `mountFolder` / `unmountFolder` / `injectKey` / `injectMouse` / `getFrame` / `setCanvasSize` / `getMouseLayout` |
+| [DosEmulator.ets](../../entry/src/main/ets/model/DosEmulator.ets) | `initResources` / `init` / `start` / `stop` / `reset` / `pause` / `resume` / `mountFolder` / `unmountFolder` / `injectKey` / `injectMouse` / `getFrameSeq` / `getFrame` / `setCanvasSize` / `getMouseLayout` |
 | [EmulatorScreen.ets](../../entry/src/main/ets/view/EmulatorScreen.ets) | 仅 `import type { FrameInfo, MouseLayout }`；输入与坐标映射经 `DosEmulator` 间接调用 |
 
 当前 ArkTS 侧**未使用**的导出：
