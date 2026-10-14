@@ -34,7 +34,6 @@ void host_restart();
 void host_pause();   // engine pause FSM (fade-out + parked CPU)
 void host_resume();
 
-bool host_is_running();
 bool host_is_paused();
 
 // Video ---------------------------------------------------------------------
@@ -43,6 +42,10 @@ bool host_is_paused();
 // `dst`. Returns false when nothing has been published yet.
 bool video_get_frame(uint8_t* dst, int dst_capacity, int* width_out,
                      int* height_out, uint32_t* seq_out);
+
+// Size and seq of the latest published frame without copying pixels; lets
+// the NAPI layer size its reusable frame buffer before fetching.
+bool video_get_frame_info(int* width_out, int* height_out, uint32_t* seq_out);
 
 // Sequence number of the latest published frame (0 = nothing yet); a
 // zero-copy poll so the frame loop can skip video_get_frame() while the

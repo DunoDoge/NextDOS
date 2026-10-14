@@ -14,13 +14,42 @@
 #include "utils/math_utils.h"
 #include "utils/rect.h"
 
-std::mutex OhosRenderBackend::snapshot_mutex_           = {};
-std::vector<uint8_t> OhosRenderBackend::snapshot_       = {};
-int OhosRenderBackend::snapshot_width_                  = 0;
-int OhosRenderBackend::snapshot_height_                 = 0;
-uint32_t OhosRenderBackend::snapshot_seq_               = 0;
+std::mutex OhosRenderBackend::published_mutex_ = {};
+std::shared_ptr<const OhosRenderBackend::FrameData> OhosRenderBackend::published_ = {};
+std::atomic<uint32_t> OhosRenderBackend::snapshot_seq_ = 0;
+std::mutex OhosRenderBackend::pool_mutex_ = {};
+std::vector<std::shared_ptr<OhosRenderBackend::FrameData>> OhosRenderBackend::frame_pool_ = {};
 std::atomic<int> OhosRenderBackend::host_canvas_width_  = 1600;
 std::atomic<int> OhosRenderBackend::host_canvas_height_ = 1200;
+
+// shared_ptr deleter: when the published slot and every in-flight consumer
+// reference are gone, park the buffer for the next publish instead of
+// freeing it — steady-state publishing performs zero allocations.
+void OhosRenderBackend::recycle_frame(FrameData* frame)
+{
+	{
+		std::lock_guard<std::mutex> lock(pool_mutex_);
+		if (frame_pool_.size() < FramePoolMax) {
+			frame_pool_.emplace_back(frame, &OhosRenderBackend::recycle_frame);
+			return;
+		}
+	}
+	delete frame;
+}
+
+std::shared_ptr<OhosRenderBackend::FrameData> OhosRenderBackend::acquire_frame()
+{
+	{
+		std::lock_guard<std::mutex> lock(pool_mutex_);
+		if (!frame_pool_.empty()) {
+			std::shared_ptr<FrameData> frame = std::move(frame_pool_.back());
+			frame_pool_.pop_back();
+			return frame;
+		}
+	}
+	return std::shared_ptr<FrameData>(new FrameData(),
+	                                  &OhosRenderBackend::recycle_frame);
+}
 
 OhosRenderBackend::OhosRenderBackend()
 {
@@ -133,17 +162,19 @@ void OhosRenderBackend::EndFrame()
 
 void OhosRenderBackend::PublishFrame()
 {
-	std::lock_guard<std::mutex> lock(snapshot_mutex_);
+	// The buffer comes from the pool (or is fresh when the pool ran dry),
+	// so no consumer holds it: the pixel loop runs entirely lock-free.
+	std::shared_ptr<FrameData> frame = acquire_frame();
 
 	const size_t row_bytes = static_cast<size_t>(render_width_) *
 	                         sizeof(uint32_t);
-	snapshot_.resize(row_bytes * render_height_);
+	frame->pixels.resize(row_bytes * render_height_);
 
 	// The engine leaves the alpha byte at 0 for text-mode background pixels;
 	// force full opacity so the ArkTS Canvas doesn't treat them as
 	// transparent (drawImage would show the black canvas underneath).
 	for (int y = 0; y < render_height_; ++y) {
-		auto* dst = reinterpret_cast<uint32_t*>(snapshot_.data() +
+		auto* dst = reinterpret_cast<uint32_t*>(frame->pixels.data() +
 		                                        row_bytes * y);
 		const auto* src_row = render_buffer_.data() +
 		                      static_cast<size_t>(MaxWidth) * y;
@@ -151,9 +182,18 @@ void OhosRenderBackend::PublishFrame()
 			dst[x] = src_row[x] | 0xFF000000u;
 		}
 	}
-	snapshot_width_  = render_width_;
-	snapshot_height_ = render_height_;
-	++snapshot_seq_;
+	frame->width  = render_width_;
+	frame->height = render_height_;
+	frame->seq    = snapshot_seq_.load(std::memory_order_relaxed) + 1;
+
+	{
+		// Held only for the pointer swap: the retired frame stays alive
+		// through the shared_ptr and returns to the pool once the last
+		// consumer reference drops.
+		std::lock_guard<std::mutex> lock(published_mutex_);
+		published_ = std::move(frame);
+	}
+	snapshot_seq_.store(published_->seq, std::memory_order_relaxed);
 }
 
 void OhosRenderBackend::PrepareFrame()
@@ -199,28 +239,35 @@ RenderedImage OhosRenderBackend::ReadPixelsPostShader(
 
 	const auto image_size_bytes = static_cast<uint32_t>(image.params.height *
 	                                                    image.pitch);
-	image.image_data            = new uint8_t[image_size_bytes];
+	image.image_data            = new uint8_t[image_size_bytes]();
 	image.is_flipped_vertically = false;
 
-	std::lock_guard<std::mutex> lock(snapshot_mutex_);
+	std::shared_ptr<const FrameData> frame;
+	{
+		std::lock_guard<std::mutex> lock(published_mutex_);
+		frame = published_;
+	}
+	if (!frame) {
+		return image;
+	}
 
 	for (int y = 0; y < image.params.height; ++y) {
 		const int src_y = output_rect_px.y + y;
-		if (src_y < 0 || src_y >= snapshot_height_) {
+		if (src_y < 0 || src_y >= frame->height) {
 			continue;
 		}
 		auto* dst_row = image.image_data + static_cast<size_t>(y) *
 		                                        image.pitch;
 		for (int x = 0; x < image.params.width; ++x) {
 			const int src_x = output_rect_px.x + x;
-			if (src_x < 0 || src_x >= snapshot_width_) {
+			if (src_x < 0 || src_x >= frame->width) {
 				continue;
 			}
 			uint32_t pixel = 0;
 			memcpy(&pixel,
-			       snapshot_.data() +
+			       frame->pixels.data() +
 			               (static_cast<size_t>(src_y) *
-			                snapshot_width_ + src_x) *
+			                frame->width + src_x) *
 			                       sizeof(uint32_t),
 			       sizeof(pixel));
 			// XRGB8888 -> B,G,R bytes
@@ -248,22 +295,41 @@ bool OhosRenderBackend::GetFrameSnapshot(uint8_t* dst, int dst_capacity,
                                          int& width_out, int& height_out,
                                          uint32_t& seq_out)
 {
-	std::lock_guard<std::mutex> lock(snapshot_mutex_);
-	if (snapshot_seq_ == 0 || snapshot_.empty()) {
+	std::shared_ptr<const FrameData> frame;
+	{
+		// Held only while taking the reference: the memcpy below runs
+		// against a buffer the engine cannot touch (it only ever fills
+		// buffers the pool owns exclusively).
+		std::lock_guard<std::mutex> lock(published_mutex_);
+		frame = published_;
+	}
+	if (!frame || frame->pixels.empty()) {
 		return false;
 	}
-	if (static_cast<size_t>(dst_capacity) < snapshot_.size()) {
+	if (static_cast<size_t>(dst_capacity) < frame->pixels.size()) {
 		return false;
 	}
-	memcpy(dst, snapshot_.data(), snapshot_.size());
-	seq_out    = snapshot_seq_;
-	width_out  = snapshot_width_;
-	height_out = snapshot_height_;
+	memcpy(dst, frame->pixels.data(), frame->pixels.size());
+	seq_out    = frame->seq;
+	width_out  = frame->width;
+	height_out = frame->height;
+	return true;
+}
+
+bool OhosRenderBackend::GetFrameInfo(int& width_out, int& height_out,
+                                     uint32_t& seq_out)
+{
+	std::lock_guard<std::mutex> lock(published_mutex_);
+	if (!published_ || published_->pixels.empty()) {
+		return false;
+	}
+	width_out  = published_->width;
+	height_out = published_->height;
+	seq_out    = published_->seq;
 	return true;
 }
 
 uint32_t OhosRenderBackend::GetFrameSeq()
 {
-	std::lock_guard<std::mutex> lock(snapshot_mutex_);
-	return snapshot_seq_;
+	return snapshot_seq_.load(std::memory_order_relaxed);
 }

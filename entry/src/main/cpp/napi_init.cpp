@@ -7,10 +7,9 @@
  *
  * Exported functions:
  *   init(configPath: string): void            // prime config path (no-op in DOSBox flow)
+ *   initResources(resourceMgr): void          // pass the JS resource manager (before start)
  *   start(configPath: string): void           // spawn emulator thread with the config
  *   stop(): void                              // clean shutdown + join
- *   mountImage(harddiskPath: string): number  // 0 ok, -1 fail (not wired yet; use imgmount)
- *   unmountImage(): void
  *   mountFolder(dir: string): number          // always 0; mount happens via [autoexec]
  *   unmountFolder(): void
  *   reset(): void                             // full re-init (stop + start)
@@ -20,24 +19,83 @@
  *   injectMouse(action, button, x, y, relX, relY): void  // action 0=move 1=button 2=wheel (relY notches, + = down; x/y unused)
  *   getFrame(): FrameInfo                     // { seq, width, height, mode, buffer } BGRA
  *   getFrameSeq(): number                      // seq of the latest frame, no copy (idle-screen poll)
- *   getStatus(): EmulatorStatus               // { running, paused }
  *   setCanvasSize(width: number, height: number): void // canvas size in vp; engine refits its draw rect
  *   getMouseLayout(): MouseLayout             // { offsetX, offsetY, drawW, drawH, renderW, renderH, valid }
  */
 #include "napi/native_api.h"
 
-#include <cstring>
+#include <cstdint>
+#include <new>
 #include <string>
-#include <vector>
 
 #include "ohos/ohos_embed.h"
 #include "rawfile/raw_file_manager.h"
 
-/* Frame buffer upper bound: 1600x1200 BGRA (matches
- * OhosRenderBackend::MaxWidth/MaxHeight in the embed layer). */
-static const int MAX_FRAME_BYTES = 1600 * 1200 * 4;
+/* ---------- persistent getFrame() buffer ----------
+ * The BGRA bytes live in ONE external ArrayBuffer sized to the current
+ * frame mode and are handed to ArkTS again on every call, so the 16 ms
+ * frame loop performs no per-frame allocation and no second copy. Safe by
+ * contract: getFrame() is only ever called on the UI thread and its only
+ * consumer (EmulatorScreen.updateFrame) copies the bytes into the PixelMap
+ * synchronously on the same tick — the buffer must be consumed before the
+ * next getFrame() call, never retained. A frame-size change rebuilds the
+ * buffer; the dropped ArrayBuffer frees its external memory through the
+ * finalize callback once collected. */
+struct FrameBufferCache {
+    napi_ref ref = nullptr;
+    uint8_t* data = nullptr;
+    size_t byteLength = 0;
+};
+static FrameBufferCache g_frame_cache;
 
-static std::vector<unsigned char> g_scratch(MAX_FRAME_BYTES);
+static void finalize_frame_buffer(napi_env env, void* data, void* hint)
+{
+    (void)env;
+    (void)hint;
+    delete[] static_cast<uint8_t*>(data);
+}
+
+/* Returns the (possibly freshly built) ArrayBuffer for the given frame
+ * size, or nullptr when it could not be created. */
+static napi_value frame_buffer_js(napi_env env, size_t byte_length)
+{
+    if (g_frame_cache.ref != nullptr &&
+        g_frame_cache.byteLength == byte_length) {
+        napi_value cached = nullptr;
+        if (napi_get_reference_value(env, g_frame_cache.ref, &cached) == napi_ok &&
+            cached != nullptr) {
+            return cached;
+        }
+    }
+    if (g_frame_cache.ref != nullptr) {
+        napi_delete_reference(env, g_frame_cache.ref);
+        g_frame_cache.ref = nullptr;
+        g_frame_cache.data = nullptr;
+        g_frame_cache.byteLength = 0;
+    }
+
+    uint8_t* data = new (std::nothrow) uint8_t[byte_length];
+    if (data == nullptr) {
+        return nullptr;
+    }
+    napi_value ab = nullptr;
+    napi_status status = napi_create_external_arraybuffer(env, data, byte_length,
+                                                          finalize_frame_buffer,
+                                                          nullptr, &ab);
+    if (status != napi_ok) {
+        delete[] data;
+        return nullptr;
+    }
+    g_frame_cache.data = data;
+    g_frame_cache.byteLength = byte_length;
+    if (napi_create_reference(env, ab, 1, &g_frame_cache.ref) != napi_ok) {
+        /* The buffer stays valid JS-side (the external finalize callback
+         * owns the memory); without the cache ref it cannot be reused, so
+         * the next call builds a fresh one. */
+        g_frame_cache.ref = nullptr;
+    }
+    return ab;
+}
 
 /* ---------- helpers ---------- */
 
@@ -116,27 +174,6 @@ static napi_value Stop(napi_env env, napi_callback_info info)
     (void)info;
     nextdos::host_stop();
 
-    napi_value result;
-    napi_get_undefined(env, &result);
-    return result;
-}
-
-/* ---------- mountImage(harddiskPath): number ---------- */
-static napi_value MountImage(napi_env env, napi_callback_info info)
-{
-    (void)info;
-    /* Raw image mounting is not wired through the DOSBox embed layer yet;
-     * use the [autoexec] 'imgmount' section in the generated config. */
-    napi_value result;
-    napi_create_int32(env, -1, &result);
-    return result;
-}
-
-/* ---------- unmountImage() ---------- */
-static napi_value UnmountImage(napi_env env, napi_callback_info info)
-{
-    (void)env;
-    (void)info;
     napi_value result;
     napi_get_undefined(env, &result);
     return result;
@@ -258,41 +295,58 @@ static napi_value GetFrame(napi_env env, napi_callback_info info)
     int width = 0, height = 0;
     uint32_t seq = 0;
 
+    /* Peek the frame size first so the reused ArrayBuffer can be sized
+     * exactly; a mode change between the peek and the fetch makes the
+     * fetch fail (capacity no longer matches), reported as a no-frame
+     * tick that the next poll picks up. */
+    if (!nextdos::video_get_frame_info(&width, &height, &seq)) {
+        width = 0;
+        height = 0;
+    }
+
+    napi_value ab = nullptr;
+    if (width > 0 && height > 0) {
+        ab = frame_buffer_js(env, static_cast<size_t>(width) * height * 4);
+        if (ab != nullptr) {
+            int fw = 0, fh = 0;
+            uint32_t fseq = 0;
+            if (!nextdos::video_get_frame(g_frame_cache.data,
+                                          static_cast<int>(g_frame_cache.byteLength),
+                                          &fw, &fh, &fseq)) {
+                ab = nullptr;
+            } else {
+                width = fw;
+                height = fh;
+                seq = fseq;
+            }
+        }
+        if (ab == nullptr) {
+            width = 0;
+            height = 0;
+            seq = 0;
+        }
+    }
+
     napi_value obj;
     napi_create_object(env, &obj);
 
     napi_value v;
     napi_create_uint32(env, seq, &v);
     napi_set_named_property(env, obj, "seq", v);
-    napi_create_int32(env, 0, &v);
+    napi_create_int32(env, width, &v);
     napi_set_named_property(env, obj, "width", v);
-    napi_create_int32(env, 0, &v);
+    napi_create_int32(env, height, &v);
     napi_set_named_property(env, obj, "height", v);
     /* mode 0 = complete BGRA bitmap (text mode is rendered by the engine). */
     napi_create_int32(env, 0, &v);
     napi_set_named_property(env, obj, "mode", v);
 
-    int byteLength = 0;
-    if (nextdos::video_get_frame(g_scratch.data(), MAX_FRAME_BYTES,
-                                 &width, &height, &seq)) {
-        byteLength = width * height * 4;
-    }
-
-    void *data = nullptr;
-    napi_value ab;
-    napi_create_arraybuffer(env, (size_t)byteLength, &data, &ab);
-    if (byteLength > 0) {
-        memcpy(data, g_scratch.data(), (size_t)byteLength);
-    }
-    napi_set_named_property(env, obj, "buffer", ab);
-
-    if (byteLength > 0) {
-        napi_create_uint32(env, seq, &v);
-        napi_set_named_property(env, obj, "seq", v);
-        napi_create_int32(env, width, &v);
-        napi_set_named_property(env, obj, "width", v);
-        napi_create_int32(env, height, &v);
-        napi_set_named_property(env, obj, "height", v);
+    if (ab != nullptr) {
+        napi_set_named_property(env, obj, "buffer", ab);
+    } else {
+        napi_value empty;
+        napi_create_arraybuffer(env, 0, nullptr, &empty);
+        napi_set_named_property(env, obj, "buffer", empty);
     }
 
     return obj;
@@ -300,8 +354,8 @@ static napi_value GetFrame(napi_env env, napi_callback_info info)
 
 /* ---------- getFrameSeq(): number ---------- */
 /* Cheap idle-screen poll for the frame loop: getFrame() copies the whole
- * frame into a fresh ArrayBuffer on the UI thread, so only a changed seq
- * should pay it. Returns 0 until the first frame is published. */
+ * frame on the UI thread, so only a changed seq should pay it. Returns 0
+ * until the first frame is published. */
 static napi_value GetFrameSeq(napi_env env, napi_callback_info info)
 {
     (void)info;
@@ -309,21 +363,6 @@ static napi_value GetFrameSeq(napi_env env, napi_callback_info info)
     napi_value result;
     napi_create_uint32(env, nextdos::video_get_frame_seq(), &result);
     return result;
-}
-
-/* ---------- getStatus(): EmulatorStatus ---------- */
-static napi_value GetStatus(napi_env env, napi_callback_info info)
-{
-    (void)info;
-
-    napi_value obj;
-    napi_create_object(env, &obj);
-    napi_value v;
-    napi_get_boolean(env, nextdos::host_is_running(), &v);
-    napi_set_named_property(env, obj, "running", v);
-    napi_get_boolean(env, nextdos::host_is_paused(), &v);
-    napi_set_named_property(env, obj, "paused", v);
-    return obj;
 }
 
 /* ---------- setCanvasSize(width, height) ---------- */
@@ -385,8 +424,6 @@ static napi_value ModuleInit(napi_env env, napi_value exports)
         { "initResources", nullptr, InitResources, nullptr, nullptr, nullptr, napi_default, nullptr },
         { "start", nullptr, Start, nullptr, nullptr, nullptr, napi_default, nullptr },
         { "stop", nullptr, Stop, nullptr, nullptr, nullptr, napi_default, nullptr },
-        { "mountImage", nullptr, MountImage, nullptr, nullptr, nullptr, napi_default, nullptr },
-        { "unmountImage", nullptr, UnmountImage, nullptr, nullptr, nullptr, napi_default, nullptr },
         { "mountFolder", nullptr, MountFolder, nullptr, nullptr, nullptr, napi_default, nullptr },
         { "unmountFolder", nullptr, UnmountFolder, nullptr, nullptr, nullptr, napi_default, nullptr },
         { "reset", nullptr, Reset, nullptr, nullptr, nullptr, napi_default, nullptr },
@@ -396,7 +433,6 @@ static napi_value ModuleInit(napi_env env, napi_value exports)
         { "injectMouse", nullptr, InjectMouse, nullptr, nullptr, nullptr, napi_default, nullptr },
         { "getFrame", nullptr, GetFrame, nullptr, nullptr, nullptr, napi_default, nullptr },
         { "getFrameSeq", nullptr, GetFrameSeq, nullptr, nullptr, nullptr, napi_default, nullptr },
-        { "getStatus", nullptr, GetStatus, nullptr, nullptr, nullptr, napi_default, nullptr },
         { "setCanvasSize", nullptr, SetCanvasSize, nullptr, nullptr, nullptr, napi_default, nullptr },
         { "getMouseLayout", nullptr, GetMouseLayout, nullptr, nullptr, nullptr, napi_default, nullptr },
     };

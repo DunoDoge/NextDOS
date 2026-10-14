@@ -339,11 +339,6 @@ void host_resume()
 	DOSBOX_RequestUserResume();
 }
 
-bool host_is_running()
-{
-	return g_running.load(std::memory_order_acquire);
-}
-
 bool host_is_paused()
 {
 	return g_running.load(std::memory_order_acquire) && DOSBOX_IsPaused();
@@ -357,6 +352,21 @@ bool video_get_frame(uint8_t* dst, int dst_capacity, int* width_out,
 	uint32_t seq   = 0;
 
 	if (!OhosRenderBackend::GetFrameSnapshot(dst, dst_capacity, w, h, seq)) {
+		return false;
+	}
+	*width_out  = w;
+	*height_out = h;
+	*seq_out    = seq;
+	return true;
+}
+
+bool video_get_frame_info(int* width_out, int* height_out, uint32_t* seq_out)
+{
+	int w        = 0;
+	int h        = 0;
+	uint32_t seq = 0;
+
+	if (!OhosRenderBackend::GetFrameInfo(w, h, seq)) {
 		return false;
 	}
 	*width_out  = w;
