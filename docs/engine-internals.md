@@ -63,10 +63,11 @@ also rejected, the engine logs
 The only sanctioned route back to a real RWX mapping is the restricted
 `ohos.permission.kernel.ALLOW_WRITABLE_CODE_MEMORY` permission, available on
 PC/2in1 and Tablet. It is deliberately **not** declared in
-`entry/src/main/module.json5` (whose only request is `ohos.permission.INTERNET`),
-so today dynrec always runs on the `mprotect` probe path. Do not add that
-permission as a debugging shortcut: it is a system-restricted ACL, it changes
-the AppGallery review surface, and the fallback already covers it.
+`entry/src/main/module.json5` (whose requests are `ohos.permission.INTERNET`
+and `ohos.permission.FILE_ACCESS_PERSIST` for the persisted folder-picker
+grants), so today dynrec always runs on the `mprotect` probe path. Do not add
+that permission as a debugging shortcut: it is a system-restricted ACL, it
+changes the AppGallery review surface, and the fallback already covers it.
 
 When the permission *is* granted and true RWX is in use, the ARM64 emitter
 (`src/cpu/core_dynrec/risc_armv8le.h`) must gate its scaled-offset
