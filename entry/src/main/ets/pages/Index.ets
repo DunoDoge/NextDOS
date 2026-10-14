@@ -11,7 +11,7 @@ import { AppSettings } from '../model/AppSettings';
 import { MountFolder, MountRecord } from '../model/MountFolder';
 import { EmulatorScreen } from '../view/EmulatorScreen';
 import { ControlKeyBar, controlCornerButton } from '../view/ControlKeyBar';
-import { KeyboardPanel } from '../view/KeyboardPanel';
+import { KeyboardPanel, KB_COMPACT_WIN_MAX_VP } from '../view/KeyboardPanel';
 import { SettingsSheet } from '../view/SettingsSheet';
 
 const TAG: string = 'NextDOS';
@@ -50,10 +50,15 @@ struct Index {
   // mountBusy: the C:/D: injections share one serialized type queue).
   @State cdMounted: boolean = false;
   @State cdBusy: boolean = false;
-  // In-app full keyboard (touch devices): replaces the bottom overlay and
-  // floats translucently over the canvas (last child of the Stack), so the
-  // canvas keeps its size and no draw-rect refit happens while it is open.
+  // In-app full keyboard (touch devices): floats translucently over the
+  // canvas (last child of the Stack, canvas keeps its size) or, when
+  // settings.keyboardDocked is set, docks as an opaque deck over the bottom
+  // half of the window with the canvas refit above it.
   @State keyboardVisible: boolean = false;
+  // settings.keyboardDocked: last-used keyboard mode, persisted so the panel
+  // reopens the same way; written through AppSettings so the @StorageLink
+  // and the preferences store stay in sync.
+  @StorageLink('settings.keyboardDocked') keyboardDocked: boolean = false;
   // settings.blockSoftKeyboard: when on, canvas taps never mount the IME
   // field, so the system soft keyboard stays down and text input goes
   // through the in-app keyboard instead.
@@ -89,6 +94,15 @@ struct Index {
   // read from the window avoid area, refreshed via avoidAreaChange (rotation,
   // fold). Stays 0 when the window reports no indicator (2in1).
   @State navInsetVp: number = 0;
+  // Window metrics in vp (0 until first read): the settings sheet clamps
+  // its 520vp card to winWidthVp, and the docked keyboard split direction
+  // follows winLandscape (portrait stacks canvas above deck, landscape
+  // puts canvas left / deck right). Refreshed via windowSizeChange on every
+  // device path — avoidAreaChange proved NOT to fire on phone rotation,
+  // which left a stale portrait width in the landscape sheet (measured on
+  // device).
+  @State winWidthVp: number = 0;
+  @State winLandscape: boolean = false;
   private emu: DosEmulator = new DosEmulator();
   private autoPaused: boolean = false;
   private mainWindow: window.Window | null = null;
@@ -119,6 +133,7 @@ struct Index {
     // component and the callback would otherwise write into a dead @State.
     if (this.navIndicatorWindow) {
       this.navIndicatorWindow.off('avoidAreaChange');
+      this.navIndicatorWindow.off('windowSizeChange');
       this.navIndicatorWindow = null;
     }
   }
@@ -219,6 +234,10 @@ struct Index {
       return;
     }
     try {
+      // 2in1 windows are free-resizable: track the width too so the
+      // settings card clamps on narrow desktop windows.
+      this.winWidthVp = this.getUIContext().px2vp(
+        this.mainWindow.getWindowProperties().windowRect.width);
       const rect = this.mainWindow.getTitleButtonRect();
       this.threeButtonWidth = this.getUIContext().px2vp(rect.width);
       // Prefer the standard title bar height (37-112vp) so the row does not
@@ -245,10 +264,18 @@ struct Index {
       const win = await window.getLastWindow(getContext(this));
       this.navIndicatorWindow = win;
       this.updateNavInset();
+      this.updateWindowMetrics();
       win.on('avoidAreaChange', (data: window.AvoidAreaOptions) => {
         if (data.type === window.AvoidAreaType.TYPE_NAVIGATION_INDICATOR) {
           this.updateNavInset();
         }
+      });
+      // Rotation does not reliably fire avoidAreaChange (the indicator
+      // inset can be identical in both orientations); windowSizeChange is
+      // the authoritative signal for the sheet clamp and the docked-split
+      // direction.
+      win.on('windowSizeChange', () => {
+        this.updateWindowMetrics();
       });
     } catch (error) {
       // No usable window (unexpected on touch devices): keep the inset at 0;
@@ -269,6 +296,27 @@ struct Index {
       this.navInsetVp = density > 0 ? area.bottomRect.height / density : 0;
     } catch (error) {
       hilog.error(0x0000, TAG, 'read nav indicator area failed: %{public}s', JSON.stringify(error));
+    }
+  }
+
+  /** Refreshes winWidthVp / winLandscape from the live window
+   * rect. Called on windowSizeChange (rotation, fold, free resize) and once
+   * at listener setup; a stale width here visibly breaks the settings sheet
+   * clamp and the docked-split direction. */
+  private updateWindowMetrics(): void {
+    if (!this.navIndicatorWindow) {
+      return;
+    }
+    try {
+      const rect = this.navIndicatorWindow.getWindowProperties().windowRect;
+      const density: number = display.getDefaultDisplaySync().densityPixels;
+      if (density <= 0) {
+        return;
+      }
+      this.winWidthVp = rect.width / density;
+      this.winLandscape = rect.width >= rect.height;
+    } catch (error) {
+      hilog.error(0x0000, TAG, 'read window metrics failed: %{public}s', JSON.stringify(error));
     }
   }
 
@@ -677,6 +725,25 @@ struct Index {
     }
   }
 
+  /** Swaps the keyboard between floating and docked. Must go through the
+   * setter (not a direct @StorageLink write) so the choice persists; the
+   * layout branch swap remounts the panel, whose aboutToDisappear releases
+   * any latched modifier. */
+  private toggleKeyboardMode(): void {
+    AppSettings.setKeyboardDocked(!this.keyboardDocked);
+  }
+
+  /** Settings sheet card width: the designed 520vp, or the window width
+   * minus a 32vp margin on narrower windows (portrait phones, now that the
+   * forced landscape is gone), where CENTER also degrades to the bottom
+   * style. */
+  private settingsSheetWidthVp(): number {
+    if (this.winWidthVp <= 0) {
+      return 520;
+    }
+    return Math.min(520, this.winWidthVp - 32);
+  }
+
   @Builder
   settingsSheet() {
     SettingsSheet({
@@ -840,7 +907,7 @@ struct Index {
           .layoutWeight(1)
       }
       .width('100%')
-      .height(44)
+      .height(40)
       .onClick(() => {
         this.emu.togglePause();
         this.paused = this.emu.isPaused();
@@ -858,7 +925,7 @@ struct Index {
           .layoutWeight(1)
       }
       .width('100%')
-      .height(44)
+      .height(40)
       .onClick(() => {
         this.emu.reset();
         this.paused = false;
@@ -876,7 +943,7 @@ struct Index {
           .layoutWeight(1)
       }
       .width('100%')
-      .height(44)
+      .height(40)
       .onClick(() => {
         this.handleMountButton();
       })
@@ -915,7 +982,7 @@ struct Index {
           .layoutWeight(1)
       }
       .width('100%')
-      .height(44)
+      .height(40)
       .onClick(() => {
         this.handleCdButton();
       })
@@ -932,25 +999,34 @@ struct Index {
           .layoutWeight(1)
       }
       .width('100%')
-      .height(44)
+      .height(40)
       .onClick(() => {
         this.showMenu = false;
         this.openSettings();
       })
     }
     .width(240)
-    .padding({ left: 14, right: 14, top: 10, bottom: 10 })
+    // Thin rows/padding on purpose: the bubble must stay short enough to
+    // fit BELOW the chip even in a ~360vp-tall phone landscape with the
+    // conditional 挂载上次目录 row — the system flips an oversized bubble
+    // above its anchor, which reads as the menu popping the wrong way.
+    .padding({ left: 14, right: 14, top: 6, bottom: 6 })
     // No background here on purpose: the native popup bubble paints
     // popupColor behind this content (and colors the arrow to match).
   }
 
-  // Corner gear anchor for quickMenu(), shared by the expanded bar and the
-  // collapsed chip so the popup config stays in one place. bindPopup only
-  // binds the bubble; the anchor itself must flip the state (official
-  // PopupOptions pattern). One-way show + onStateChange, never $$: the mask
-  // dismiss must write false back or showMenu sticks true (gear dies, branch
-  // swaps resurrect the popup on a fresh anchor). Native bubble: arrow on +
-  // dark popupColor, rise-in / fade-out transition.
+  // Standalone settings gear at the top-right corner, moved out of the
+  // bottom overlay so crowded portrait bars keep full key width and the
+  // menu stays reachable while the in-app keyboard is up. Anchors the quick
+  // menu popup (opens downward). bindPopup only binds the bubble; the
+  // anchor itself must flip the state (official PopupOptions pattern).
+  // One-way show + onStateChange, never $$: the mask dismiss must write
+  // false back or showMenu sticks true (gear dies, branch swaps resurrect
+  // the popup on a fresh anchor). Native bubble: dark popupColor, plain
+  // fade — no directional slide, the bubble sits below the chip (see
+  // quickMenu for the fit constraint). The translucent plate keeps the
+  // glyph readable over bright DOS content; the surrounding wrapper is
+  // touch-transparent (see emulatorStack).
   @Builder
   gearMenuButton() {
     Column() {
@@ -958,9 +1034,13 @@ struct Index {
         .fontSize(22)
         .fontColor(['#E6E6E6'])
     }
-    .width('100%')
+    .width(40)
     .height(40)
     .justifyContent(FlexAlign.Center)
+    .borderRadius(20)
+    // 50% of the quick-menu bubble tone: visibly a translucent plate on
+    // bright DOS content, one family with the menu it opens.
+    .backgroundColor('#801E1E22')
     // Touch-only chrome: reachable by tap and by assistive focus, but not
     // by Tab traversal, so a hardware keyboard never parks focus here and
     // swallows guest keys (Tab/Enter would activate the button instead).
@@ -970,7 +1050,7 @@ struct Index {
     })
     .bindPopup(this.showMenu, {
       builder: this.quickMenu(),
-      placement: Placement.Top,
+      placement: Placement.Bottom,
       popupColor: '#1E1E22',
       backgroundBlurStyle: BlurStyle.NONE,
       enableArrow: true,
@@ -981,25 +1061,22 @@ struct Index {
           this.showMenu = false;
         }
       },
-      transition: TransitionEffect.asymmetric(
-        TransitionEffect.OPACITY.animation({ duration: 220, curve: Curve.EaseOut })
-          .combine(TransitionEffect.translate({ y: 12 })),
-        TransitionEffect.OPACITY.animation({ duration: 150, curve: Curve.EaseIn })
-      )
+      transition: TransitionEffect.OPACITY.animation({ duration: 180, curve: Curve.EaseOut })
     })
   }
 
   /**
    * Bottom overlay column floating over the canvas: HiSH-style borderless
-   * control bar (expanded) or the settings/keyboard/expand corner (collapsed).
-   * HitTestMode.None lets touches on the strips' empty areas fall through to
-   * the canvas (DOS mouse) while keys and the gear keep their own handlers;
-   * the expanded strip paints translucent black so the DOS screen stays
+   * control bar (expanded) or the keyboard/expand corner (collapsed; the
+   * settings gear moved to the top-right corner chip, see gearMenuButton).
+   * HitTestMode.None lets touches on the strips' empty areas fall through
+   * to the canvas (DOS mouse) while keys keep their own handlers; the
+   * expanded strip paints translucent black so the DOS screen stays
    * readable underneath while the keys render full-brightness white, the
    * collapsed corner is fully transparent. Both states carry the keyboard
-   * toggle; the panel itself is a later child of the same bottom-anchored
-   * Stack (see build), floating over the canvas instead of docking below it,
-   * so showing it never resizes the DOS picture.
+   * toggle; in floating mode the panel overlays the canvas the same way
+   * (never resizing the DOS picture), while the docked mode panel is mounted
+   * below this Stack as its sibling (see build) and does resize it.
    */
   @Builder
   controlOverlay() {
@@ -1010,8 +1087,6 @@ struct Index {
             .layoutWeight(1)
 
           Column({ space: 2 }) {
-            this.gearMenuButton()
-
             Column() {
               SymbolGlyph($r('sys.symbol.keyboard'))
                 .fontSize(22)
@@ -1045,15 +1120,12 @@ struct Index {
         .backgroundColor('#CC000000')
         .hitTestBehavior(HitTestMode.None)
       } else {
-        // Collapsed: keep the settings entry above the keyboard and expand
-        // buttons in the same bottom-right corner, popup still anchored
-        // beside the gear. Fully transparent so the collapsed corner floats
-        // on the canvas.
+        // Collapsed: keep the keyboard and expand buttons in the same
+        // bottom-right corner. Fully transparent so the collapsed corner
+        // floats on the canvas.
         Row() {
           Blank()
           Column({ space: 2 }) {
-            this.gearMenuButton()
-
             controlCornerButton($r('sys.symbol.keyboard'), () => {
               this.toggleKeyboard();
             })
@@ -1151,45 +1223,154 @@ struct Index {
       })
   }
 
+  /**
+   * The single emulator surface stack, shared by every layout: canvas plus
+   * the floating touch overlays (IME layer, control overlay, top-right gear
+   * chip) plus the floating-mode keyboard branch. The docked deck instead
+   * mounts as a LATER SIBLING inside the one content Flex (see build):
+   * portrait stacks canvas above deck (50/50), landscape puts canvas left
+   * and deck right, and the direction is a Flex attribute so the swap is a
+   * relayout — never a re-branch. One render path only — EmulatorScreen
+   * must stay a single instance across rotation and keyboard-mode changes.
+   */
+  @Builder
+  emulatorStack() {
+    // On-screen overlays float over the DOS screen so they never squeeze
+    // the emulator canvas: the Termux control bar is one bottom-anchored
+    // column with its own chevron toggle, and the in-app KeyboardPanel in
+    // floating mode overlays the bottom edge the same way (see
+    // KeyboardPanel for the see-through and hit-test contract). While the
+    // panel is up (or the blockSoftKeyboard setting is on) the IME field
+    // stays unmounted so a canvas tap can never summon the system
+    // keyboard over the panel.
+    Stack({ alignContent: Alignment.Bottom }) {
+      EmulatorScreen({ emu: this.emu })
+      if (!IS_DESKTOP) {
+        if (!this.blockSoftKeyboard && !this.keyboardVisible) {
+          this.imeLayer()
+        }
+        if (!this.keyboardVisible) {
+          this.controlOverlay()
+        }
+        // Top-right gear chip (moved out of the bottom overlay): the
+        // HitTestMode.None wrapper leaves every touch outside the chip to
+        // the DOS mouse, and it stays mounted while the keyboard panel is
+        // up, unlike controlOverlay. 16vp keeps the chip clear of the
+        // window edges (the immersive bars are hidden, so this is pure
+        // breathing room).
+        Stack({ alignContent: Alignment.TopEnd }) {
+          this.gearMenuButton()
+        }
+        .width('100%')
+        .height('100%')
+        .padding({ top: 16, right: 16 })
+        .hitTestBehavior(HitTestMode.None)
+        // Floating mode: 40% black strip over the panel's translucent
+        // caps (contract in KeyboardPanel): the picture stays readable
+        // beneath and default hit testing eats taps between keys. Bottom
+        // padding holds the gesture-indicator clearance.
+        if (this.keyboardVisible && !this.keyboardDocked) {
+          KeyboardPanel({
+            emu: this.emu,
+            onHide: () => {
+              this.keyboardVisible = false;
+            },
+            onToggleMode: () => {
+              this.toggleKeyboardMode();
+            }
+          })
+            .padding({ bottom: Math.max(this.navInsetVp, 28) })
+            .backgroundColor('#66000000')
+        }
+      }
+    }
+    .width('100%')
+    .height('100%')
+  }
+
+  /** Docked-mode keyboard deck (the opaque split panel); the call site
+   * sizes the wrapper (half the height in portrait, half the width in
+   * landscape). The deck keeps its gesture-indicator bottom padding in
+   * both directions. */
+  @Builder
+  dockedKeyboardPanel() {
+    KeyboardPanel({
+      emu: this.emu,
+      docked: true,
+      compact: this.dockedDeckCompact(),
+      onHide: () => {
+        this.keyboardVisible = false;
+      },
+      onToggleMode: () => {
+        this.toggleKeyboardMode();
+      }
+    })
+      .padding({ bottom: Math.max(this.navInsetVp, 28) })
+      .backgroundColor('#1A1A20')
+  }
+
+  /** Compact-layout predicate for the docked deck, judged by the DECK
+   * width: half the window in the landscape side-by-side split, the full
+   * width in portrait. A 772vp landscape phone halves to a 386vp deck that
+   * needs the compact rows exactly like a 360vp portrait phone; a portrait
+   * tablet's 800vp deck keeps the full layout. False until the first
+   * window read, matching the original window-width guard. */
+  private dockedDeckCompact(): boolean {
+    if (this.winWidthVp <= 0) {
+      return false;
+    }
+    const deckW: number = this.winLandscape ? this.winWidthVp / 2 : this.winWidthVp;
+    return deckW < KB_COMPACT_WIN_MAX_VP;
+  }
+
   build() {
     Column() {
       if (IS_DESKTOP) {
         this.desktopTitleBar()
       }
 
-      // On-screen overlays float over the DOS screen so they never squeeze
-      // the emulator canvas: the Termux control bar is one bottom-anchored
-      // column with its own chevron toggle, and the in-app KeyboardPanel
-      // floats translucently over the bottom edge the same way (see
-      // KeyboardPanel for the see-through and hit-test contract). While the
-      // panel is up (or the blockSoftKeyboard setting is on) the IME field
-      // stays unmounted so a canvas tap can never summon the system
-      // keyboard over the panel.
-      Stack({ alignContent: Alignment.Bottom }) {
-        EmulatorScreen({ emu: this.emu })
-        if (!IS_DESKTOP) {
-          if (!this.blockSoftKeyboard && !this.keyboardVisible) {
-            this.imeLayer()
+      // One content region, never re-branched: EmulatorScreen owns the
+      // shared frame loop and must survive every layout transition
+      // (see emulatorStack). An if/else here — one branch per split
+      // direction — remounts the whole subtree on every docked rotation,
+      // and the remount race between the old screen's stopFrameLoop and
+      // the new screen's startFrameLoop killed the poll interval while
+      // input kept flowing (frozen picture until the window rotated back).
+      // The split direction is therefore a Flex ATTRIBUTE (in-place
+      // relayout, children keep their identity), and the docked deck is a
+      // conditional CHILD, never an ancestor of the canvas.
+      Flex({
+        direction: this.keyboardVisible && this.keyboardDocked && this.winLandscape
+          ? FlexDirection.Row : FlexDirection.Column
+      }) {
+        // Canvas region. layoutWeight takes the main axis whichever way
+        // the Flex points; the explicit 100% sizes fill the cross axis.
+        Column() {
+          this.emulatorStack()
+        }
+        .width('100%')
+        .height('100%')
+        .layoutWeight(1)
+
+        // Docked deck (touch devices only). Portrait: it sits BELOW the
+        // canvas stack, whose layoutWeight yields it the bottom half —
+        // onAreaChange then reports the smaller canvas and the engine
+        // refits its draw rect, the same resize path the soft keyboard's
+        // RESIZE avoid mode exercises. Landscape: side-by-side — canvas
+        // left, deck right half; halving a ~360vp-tall landscape window
+        // horizontally instead would starve both halves (~160vp deck rows,
+        // ~213x160 picture). keyboardVisible can only be true on touch
+        // devices (2in1 mounts no toggle for it), so no IS_DESKTOP guard
+        // is needed.
+        if (!IS_DESKTOP && this.keyboardVisible && this.keyboardDocked) {
+          Column() {
+            this.dockedKeyboardPanel()
           }
-          if (!this.keyboardVisible) {
-            this.controlOverlay()
-          }
-          // 40% black strip over the panel's translucent caps (contract in
-          // KeyboardPanel): the picture stays readable beneath and default
-          // hit testing eats taps between keys. Bottom padding holds the
-          // gesture-indicator clearance.
-          if (this.keyboardVisible) {
-            KeyboardPanel({
-              emu: this.emu,
-              onHide: () => {
-                this.keyboardVisible = false;
-              }
-            })
-              .padding({ bottom: Math.max(this.navInsetVp, 28) })
-              .backgroundColor('#66000000')
-          }
+          .width(this.winLandscape ? '50%' : '100%')
+          .height(this.winLandscape ? '100%' : '50%')
         }
       }
+      .width('100%')
       .layoutWeight(1)
     }
     .width('100%')
@@ -1201,12 +1382,13 @@ struct Index {
     // takeover, shadow on 2in1 only, plateless close icon), so everything
     // that differs is pinned here: forced centered floating card + shadow +
     // mask (center style masks by default), the same on the 2in1 as on
-    // tablet. Fixed width so the card reads as a dialog on any window size.
-    // Phones never fall into CENTER's <600vp bottom fallback because
-    // EntryAbility forces narrow windows to landscape (width >= 600vp).
+    // tablet. Designed width 520vp so the card reads as a dialog, clamped
+    // to the window on narrower (portrait phone) windows, where CENTER
+    // degrades to the bottom style — forced landscape is gone, see
+    // EntryAbility.
     .bindSheet(this.showSettings, this.settingsSheet(), {
       preferType: SheetType.CENTER,
-      width: 520,
+      width: this.settingsSheetWidthVp(),
       height: SheetSize.FIT_CONTENT,
       backgroundColor: '#1A1A20',
       showClose: false,

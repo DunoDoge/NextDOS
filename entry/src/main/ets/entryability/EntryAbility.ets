@@ -1,7 +1,7 @@
 import { AbilityConstant, ConfigurationConstant, UIAbility, Want } from '@kit.AbilityKit';
 import { BusinessError, deviceInfo } from '@kit.BasicServicesKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
-import { display, window } from '@kit.ArkUI';
+import { window } from '@kit.ArkUI';
 
 const DOMAIN = 0x0000;
 
@@ -34,7 +34,6 @@ export default class EntryAbility extends UIAbility {
       } else {
         this.applyImmersiveMode(windowStage);
       }
-      this.applyNarrowScreenOrientation(windowStage);
     });
   }
 
@@ -55,28 +54,6 @@ export default class EntryAbility extends UIAbility {
       });
     } catch (err) {
       hilog.error(DOMAIN, 'testTag', 'Failed to apply immersive mode. Cause: %{public}s', JSON.stringify(err));
-    }
-  }
-
-  /**
-   * Narrow screens (a phone held in portrait) run the emulator forced to
-   * landscape: the DOS view is barely usable in portrait, and the centered
-   * settings sheet only renders centered above 600vp of window width. Wide
-   * windows keep whatever orientation they already have.
-   */
-  private applyNarrowScreenOrientation(windowStage: window.WindowStage): void {
-    try {
-      const win = windowStage.getMainWindowSync();
-      const rect = win.getWindowProperties().windowRect;
-      const density = display.getDefaultDisplaySync().densityPixels;
-      if (rect.width / density < 600) {
-        win.setPreferredOrientation(window.Orientation.LANDSCAPE)
-          .catch((err: BusinessError) => {
-            hilog.error(DOMAIN, 'testTag', 'Failed to force landscape. Cause: %{public}s', JSON.stringify(err));
-          });
-      }
-    } catch (err) {
-      hilog.error(DOMAIN, 'testTag', 'Failed to read window for orientation. Cause: %{public}s', JSON.stringify(err));
     }
   }
 
