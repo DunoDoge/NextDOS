@@ -130,23 +130,53 @@ entry/src/main/
   each of `handleTouchUp` and `handleScrollUp`, placed before the `cancelled` branch so a system-cancelled gesture
   clears it too; a clean tap re-records itself afterwards, which is what chains tap-tap into tap-tap-hold-drag. Never
   split that clearing back into per-branch copies, and keep the `tapDt >= 0` guard (`Date.now()` is a wall clock).
-- Text input has two touch paths. System IME: tapping the screen focuses an invisible full-canvas TextArea
-  (`Index.imeLayer`) whose content `Index.handleImeChange` diffs into `DosEmulator.typeIntoGuest`, with
-  `KeyboardAvoidMode.RESIZE` keeping the canvas visible; while that field is focused, hardware-key events still bubble
-  to the root `onKeyEvent` and text-producing keys must not be injected there (`DosKeyMap.isImeHandled`), they already
-  arrive as the field diff. In-app keyboard: `KeyboardPanel` (full PC layout, sticky Shift/Ctrl/Alt, hold-to-repeat)
-  floats translucently over the bottom of the canvas as the LAST child of Index's Stack — the canvas keeps its full
-  size, no `setCanvasSize` refit happens while it is up, and default hit testing consumes every touch on the strip so
-  taps between keys never reach the DOS mouse. While it is up, `imeLayer` and `controlOverlay` are unmounted (the
-  panel owns the bottom edge and carries its own hide button), and its sticky modifiers are released in
-  `aboutToDisappear` or the guest keeps them held.
+- Text input has two touch paths that must stay composable. System IME: tapping the screen focuses an invisible
+  full-canvas TextArea (`Index.imeLayer`) whose content `Index.handleImeChange` diffs into
+  `DosEmulator.typeIntoGuest` (inserts) and `DosEmulator.backspaceIntoGuest` (deletions, same serialized queue as
+  typed text), with `KeyboardAvoidMode.RESIZE` keeping the canvas visible; while that field is focused, hardware-key
+  events still bubble to the root `onKeyEvent` and text-producing keys must not be injected there
+  (`DosKeyMap.isImeHandled`), they already arrive as the field diff. Two invariants hold the IME diff together with
+  the direct-injection channels (KeyboardPanel / hardware keys inject scancodes and never touch the buffer):
+  `imeBuffer` is a CONTROLLED field (written on every change, so a remount restores exactly what the diff baseline
+  `imeLastBuffer` remembers — a stale param here once made the first post-remount diff fire phantom backspaces and
+  swallow the first character), and while focused the field is never EMPTY: a zero-width-space sentinel
+  (`IME_SENTINEL`) seeded at focus makes a backspace on an otherwise empty field observable at all (an empty field
+  produces no onChange), so every reported deletion maps 1:1 to guest DELs no matter which channel typed the
+  characters. Losing the sentinel together with real text is not a DEL; losing it from a sentinel-only field counts
+  as the backstroke ONLY as a pure deletion (value empty) — lost alongside inserted text (caret before the sentinel,
+  IME whole-content replacement) it is typing collateral and must not fire a DEL, or the first soft-keyboard
+  character after a fresh focus phantom-deletes the last panel-typed character. Input methods report one backspace
+  on the sentinel-only field TWICE (composing clear + content delete, both as value === ''), so that branch also
+  dedups same-stroke echoes (80 ms window); content deletions are single-report and need no dedup.
+  In-app keyboard: `KeyboardPanel` (full PC layout, sticky Shift/Ctrl/Alt, hold-to-repeat)
+  has two modes toggled from its nav row and persisted as `settings.keyboardDocked`. Floating (default): translucent
+  strip as the LAST child of Index's Stack — the canvas keeps its full size, no `setCanvasSize` refit happens while
+  it is up, and default hit testing consumes every touch on the strip so taps between keys never reach the DOS mouse.
+  Docked (split): an opaque half-window deck mounted as a LATER SIBLING of the Stack inside the one content Flex —
+  the canvas genuinely shrinks and the engine refits the draw rect through the same `setCanvasSize` path the soft
+  keyboard's RESIZE avoid mode exercises; the split direction follows the window aspect — portrait stacks canvas
+  above deck (50/50), landscape puts canvas left and deck right (halving a ~360 vp-tall landscape window
+  horizontally starves both halves). The direction is a Flex ATTRIBUTE, never an if/else branch pair: a direction
+  branch swap destroys and rebuilds the whole subtree, remounting `EmulatorScreen` mid-rotation — its teardown
+  (`stopFrameLoop`) races the new instance's `startFrameLoop` on the shared `emu` interval, leaving the picture
+  frozen while input keeps flowing (the docked-rotation freeze bug). Attribute updates relayout in place and never
+  remount children.
+  Below `KB_COMPACT_WIN_MAX_VP` (500 vp) the docked DECK re-flows into a 9-row, max-11-column compact layout — the
+  trigger is the DECK width (half the window in the landscape split), not the window width; every key stays visible,
+  no symbol plane; only the duplicate right Shift drops (identical keycode). The `ControlKeyBar` keys are
+  width-adaptive (30..48 vp from the bar's own measured width) so the bar never overflows a narrow window. In either mode `imeLayer` and `controlOverlay` are unmounted while
+  it is up (the panel owns the
+  bottom edge and carries its own hide button), and its sticky modifiers are released in `aboutToDisappear` or the
+  guest keeps them held — the mode toggle swaps the panel's own branches, which remounts the panel (and only the
+  panel) through that same path.
 - Guest-owned keys are intercepted at `onKeyPreIme` (root + imeLayer) and consumed: `DosKeyMap.isTraversalKey`
   (Tab, direction keys) plus `isActivationKey` (Enter family, root only — the field's Enter stays on the
   content-diff path). Tab is the key that cannot be handled any other way: the focus stage consumes it and
   `onKeyEvent` never fires for it (measured on device), so the guest silently loses command line completion. The
   direction keys do reach `onKeyEvent` and are injected there, but they also drive focus traversal, which parks
   focus on the corner chrome; Enter then activates that button instead of executing the guest command, so the
-  interception keeps focus on the page. Every touch-only chrome button (control overlay corners, KeyboardPanel
+  interception keeps focus on the page. Every touch-only chrome button (control overlay corners, the top-right gear
+  chip, KeyboardPanel
   hide, 2in1 title-bar symbols) carries `tabIndex(-1)`: focusable for taps and assistive focus, invisible to Tab
   traversal. Two consequences are deliberate: (a) while the settings sheet or the quick menu is open every
   hardware-key path declines (`Index.modalOpen`), so the overlay keeps its keys and none of them reach the guest
@@ -198,7 +228,14 @@ entry/src/main/
   sheet-in-sheet has no documented guarantee. `@Builder` parameters are by-value: pass an object wrapper or `$$` where
   mutation must propagate.
 - `IS_DESKTOP` is `deviceType === '2in1'`: 2in1 draws its own title row with window decor hidden and keeps its symbols
-  left of the system three-button rect, phone/tablet get `ControlKeyBar` and immersive full screen. Windows narrower
-  than 600 vp force `window.Orientation.LANDSCAPE`.
+  left of the system three-button rect, phone/tablet get `ControlKeyBar` and immersive full screen. Orientation follows
+  the system (portrait is allowed; the docked keyboard mode is the portrait story) and the settings sheet clamps its
+  520 vp card to the window width (`Index.winWidthVp`) — on windows below 600 vp CENTER degrades to the bottom style.
+  `winWidthVp`/`winLandscape` refresh on `windowSizeChange`; `avoidAreaChange` does NOT fire on phone rotation
+  (measured on device — a stale portrait width in the landscape sheet was exactly that bug).
+  Rotation is declared in module.json5 as `orientation: auto_rotation_restricted` (sensor-following, gated by the
+  control-center rotation switch): with the field absent a phone window stays in its launch orientation and never
+  rotates — tablets rotate by system policy anyway, which masked the gap. Never re-add a runtime orientation
+  switch: the declaration is the whole fix.
 - Licensing is load-bearing: dosbox-staging is GPL-2.0-or-later and the whole app inherits it — keep root `LICENSE`,
   `README.md`, the in-app `LicenseSheet` and `NOTICE.md` in sync when a third-party component changes.
