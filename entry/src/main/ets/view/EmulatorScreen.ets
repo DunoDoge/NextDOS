@@ -1,7 +1,10 @@
 import { display } from '@kit.ArkUI';
 import { image } from '@kit.ImageKit';
+import { hilog } from '@kit.PerformanceAnalysisKit';
 import type { FrameInfo, MouseLayout } from 'libentry.so';
 import { DosEmulator } from '../model/DosEmulator';
+
+const TAG: string = 'NextDOS';
 
 // Single-finger gesture thresholds. A touch that lifts within the slosh
 // radius before the long-press timer fires is a tap (left click); a slide
@@ -196,7 +199,7 @@ export struct EmulatorScreen {
       }
     } catch (e) {
       const err = e as Error;
-      console.error('NextDOS display density failed: ' + err.message);
+      hilog.error(0x0000, TAG, 'display density failed: %{public}s', err.message);
     }
     this.emu.onFrame = (f: FrameInfo): void => {
       this.updateFrame(f);
@@ -273,7 +276,7 @@ export struct EmulatorScreen {
         this.pixelMap = image.createPixelMapSync(initOpts);
       } catch (e) {
         const err = e as Error;
-        console.error('NextDOS createPixelMapSync failed: ' + err.message);
+        hilog.error(0x0000, TAG, 'createPixelMapSync failed: %{public}s', err.message);
         return;
       }
     }
@@ -282,7 +285,7 @@ export struct EmulatorScreen {
       pm.writeBufferToPixelsSync(f.buffer);
     } catch (e) {
       const err = e as Error;
-      console.error('NextDOS writeBufferToPixelsSync failed: ' + err.message);
+      hilog.error(0x0000, TAG, 'writeBufferToPixelsSync failed: %{public}s', err.message);
       return;
     }
     this.frameW = f.width;
