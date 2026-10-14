@@ -93,9 +93,7 @@ entry/src/main/
 
 - ArkTS is the strict TS subset: explicit types on every lambda parameter and Promise generic, no `any`, no untyped
   object literals, no destructuring; import system APIs from `@kit.*`.
-- Log through `hilog` with domain `0x0000` and TAG `'NextDOS'`; `%{public}` format specifiers only. Known drift:
-  the `entryability`/`entrybackupability` scaffold still logs under TAG `testTag`, and `EmulatorScreen`'s pixel-map
-  error paths use `console.error` — switch them to `hilog` when touching those files.
+- Log through `hilog` with domain `0x0000` and TAG `'NextDOS'`; `%{public}` format specifiers only.
 - A NAPI export change means updating all three together: `napi_init.cpp`, `cpp/types/libentry/Index.d.ts`, and the
   `DosEmulator` wrapper.
 - Comments state the constraint (why) in English, matching the file being edited.
