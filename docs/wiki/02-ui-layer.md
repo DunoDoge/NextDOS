@@ -16,7 +16,11 @@ UI 组件（`view/`）。
 | --- | --- | --- |
 | `applyImmersiveMode` | phone / tablet | `setWindowLayoutFullScreen(true)` + 隐藏系统栏（`setWindowSystemBarEnable([])`），实现沉浸式全屏 |
 | `applyDesktopTitleBar` | 2in1 | 隐藏系统标题栏装饰（`setWindowDecorVisible(false)`），并把窗口三键设为浅色，配合页面自绘黑色标题行 |
-| `applyNarrowScreenOrientation` | 窗口宽度 < 600 vp | 强制横屏 `LANDSCAPE`（竖屏下 DOS 画面不可用，且设置面板居中需 ≥600vp） |
+
+方向由 module.json5 `orientation: "auto_rotation_restricted"` 声明（传感器跟随、受控制中心旋转开关控制）：
+字段缺失时手机窗口保持启动方向不旋转（平板被系统大屏策略放行）——这正是"手机无法切回横屏"的根因。
+竖屏因此可用，配合键盘分屏模式；设置面板卡宽按窗口宽收窄（`Index.winWidthVp`），窄于 600vp 时 CENTER
+退化为底部样式。
 
 `onCreate` 里把颜色模式设为 `COLOR_MODE_NOT_SET`，交由系统/资源决定深浅色。
 
@@ -32,7 +36,7 @@ UI 组件（`view/`）。
   `ohos.permission.FILE_ACCESS_PERSIST`（`fileShare` 对 picker 选中的挂载目录做授权持久化/激活；
   上架需在 AGC 申请受限权限把 ACL 写入 Profile）
 - `metadata`：`appgallery_privacy_hosted` 及隐私声明链接（AGC 标准化隐私托管）
-- `abilities`：`EntryAbility`（`exported: true`，desktop skills）
+- `abilities`：`EntryAbility`（`exported: true`，desktop skills，`orientation: "auto_rotation_restricted"`）
 - `extensionAbilities`：`EntryBackupAbility`
 
 ---
@@ -54,9 +58,11 @@ UI 组件（`view/`）。
 | `folderMounted` / `mountBusy` | C: 目录挂载状态与并发互斥 |
 | `cdMounted` / `cdBusy` | D: 光盘挂载状态与并发互斥 |
 | `keyboardVisible` | 应用内全键盘是否显示 |
+| `keyboardDocked` | `@StorageLink('settings.keyboardDocked')`，键盘分屏模式（驻底占半屏、画面 refit 到上半屏），经 `AppSettings.setKeyboardDocked` 写入以同步持久化 |
 | `blockSoftKeyboard` | `@StorageLink('settings.blockSoftKeyboard')`，禁用系统软键盘 |
-| `imeBuffer` / `imeLastBuffer` | 不可见 IME 字段内容与差分基准 |
+| `imeBuffer` / `imeLastBuffer` | 不可见 IME 字段内容（受控，每次变更写回）与差分基准，二者恒相等；聚焦时播种零宽哨兵保证字段非空（见 `imeLayer`） |
 | `navInsetVp` | 导航手势条避让高度（vp） |
+| `winWidthVp` / `winLandscape` | 窗口宽（vp）与横竖屏标志：设置面板卡宽据此收窄，分屏键盘方向据此选择（竖屏上下分、横屏左右分）。均随 `windowSizeChange` 刷新（`avoidAreaChange` 在手机旋转时不触发，曾导致横屏面板卡宽残留竖屏值） |
 
 ### 2.2 生命周期与启动流程
 
@@ -111,15 +117,36 @@ boot()
 
 - `desktopTitleBar()`：2in1 自绘标题行（图标 + 名称 + 右侧符号按钮：暂停/重启/挂载目录/挂载光盘/设置），
   右侧留出系统三键宽度（`threeButtonWidth`）。
-- `quickMenu()`：触屏设备右上角齿轮的快捷菜单（暂停/继续、重启、挂载/卸载目录、挂载上次目录〔仅未挂载且有记录时显示〕、挂载/卸载光盘、设置）。
-- `gearMenuButton()`：`bindPopup` 锚点，采用单向 `showMenu` + `onStateChange` 写回（遮罩关闭必须回写 `false`）。
-- `controlOverlay()`：底部悬浮控制层（展开=控制栏，收起=角落齿轮/键盘/展开按钮）；
-  用 `HitTestMode.None` 让空白区域触摸落到画面（DOS 鼠标）上。
+- `quickMenu()`：触屏设备右上角齿轮芯片的快捷菜单（暂停/继续、重启、挂载/卸载目录、挂载上次目录〔仅未挂载
+  且有记录时显示〕、挂载/卸载光盘、设置）。
+- `gearMenuButton()`：右上角独立悬浮齿轮芯片（半透明底保证在亮色画面上可读），`bindPopup` 锚点向下弹出，
+  采用单向 `showMenu` + `onStateChange` 写回（遮罩关闭必须回写 `false`）。菜单行高 40vp、薄内边距：
+  气泡必须短到在 ~360vp 高的横屏手机窗口里也能放在齿轮**下方**（含条件行），放不下会被系统翻转
+  到锚点上方（表现为"弹出方向反了"）。外层 `HitTestMode.None` 包裹层让芯片以外的触摸落到画面上；
+  键盘面板打开期间它保持挂载（`controlOverlay` 则被卸载）。
+- `controlOverlay()`：底部悬浮控制层（展开=控制栏+键盘/收起按钮，收起=角落键盘/展开按钮；齿轮已移至
+  右上角独立芯片）；用 `HitTestMode.None` 让空白区域触摸落到画面（DOS 鼠标）上。
 - `imeLayer()`：覆盖全屏的**不可见** `TextArea`，点按原生聚焦即唤起系统输入法，
   `HitTestMode.Transparent` 让同一次触摸也到达 `EmulatorScreen`（字段未注册 `onMouse`/`onAxisEvent`，
-  触摸板移动/点击与滚轮轴事件照常落在画布上）。
-- `build()`：桌面加标题行；否则 `Stack` 叠加 `EmulatorScreen` + `imeLayer`/`controlOverlay`/`KeyboardPanel`；
-  根节点 `bindSheet` 挂载设置面板。底部控制栏的齿轮/键盘/收起等触屏专用按钮带 `tabIndex(-1)`：
+  触摸板移动/点击与滚轮轴事件照常落在画布上）。内容为**受控字段**（`imeBuffer` 每次变更都写回，
+  重挂载恢复的内容恒等于差分基准 `imeLastBuffer` 记忆的内容）；聚焦时字段**永不为空**——
+  聚焦播种一个零宽空格哨兵（`IME_SENTINEL`），否则空字段上的软键盘退格不产生任何 onChange、
+  删除在结构上就送不到 guest。差分删除经 `backspaceIntoGuest`（与 `typeIntoGuest` 同一条序列化队列）
+  1:1 映射为 guest 退格，与哪个通道（虚拟键盘/实体键盘直通注入）打的字无关；哨兵随正文一起
+  被全选清空时不计退格，仅含哨兵的字段里哨兵被**纯删除**（结果为空）才计那一次退格——
+  若与插入字符相伴消失（光标在哨兵前插入、输入法整体替换内容）则是输入的附带损耗，
+  不得注入退格，否则新聚焦后软键盘的第一个字符会幻影删掉虚拟键盘最后输入的字符。
+  输入法对仅含哨兵的空字段的退格会**双报**（组合区清除与内容删除各报一次 `''`），
+  该分支按 80ms 同击窗口去重；内容态删除为单报，无需去重。
+- `build()`：桌面加标题行；触屏以 `emulatorStack()`（唯一渲染路径：`EmulatorScreen` +
+  `imeLayer`/`controlOverlay`/右上角齿轮芯片/悬浮态 `KeyboardPanel`）为主体。内容区是**单个 Flex**：
+  无分屏时画布列占满；分屏时键盘盘面作为 Flex 内画布列**之后的条件子项**挂载——
+  **竖屏上下 50/50**（键盘在下），**横屏左右分**（画面左、键盘右半屏），画布随容器真实缩小、
+  经 `setCanvasSize` 引擎 refit（与软键盘 RESIZE 避让同一条链路）。分屏方向是 Flex 的
+  **属性**（`direction`）而非 if/else 分支对：分支翻转会销毁重建整个子树、把 `EmulatorScreen`
+  连同共享帧循环一起重挂（`stopFrameLoop`/`startFrameLoop` 在新旧实例间竞态），旋转分屏时表现为
+  画面冻结而输入照常到达；属性更新只做原位重排，子组件身份不变。根节点 `bindSheet` 挂载设置面板。
+  底部控制栏的齿轮/键盘/收起等触屏专用按钮带 `tabIndex(-1)`：
   可点击、可被辅助焦点选中，但不参与 Tab 走焦，硬件键盘因此不会把焦点停在 UI 按钮上吞掉 guest 的按键。
 
 ### 2.6 设备差异
@@ -163,18 +190,31 @@ boot()
 ### 3.2 `ControlKeyBar`（[ControlKeyBar.ets](../../entry/src/main/ets/view/ControlKeyBar.ets)）
 
 底部无边框控制键栏（HiSH 风格），两行：`ESC ALT DEL | PGUP HOME ↑ END` 与
-`TAB CTRL INS | PGDN ← ↓ →`。Ctrl/Alt 为**粘滞（sticky）** 锁存：按下发 down，再按发 up；
+`TAB CTRL INS | PGDN ← ↓ →`。键宽**自适应**（`keyWVp`，30..48vp，由组件自身 `onAreaChange`
+实测宽度推导）：宽裕时保持 48vp 观感，窄窗口（竖屏手机，可用宽度 ~300vp）按 7 键均分收缩，
+不再溢出屏幕。Ctrl/Alt 为**粘滞（sticky）** 锁存：按下发 down，再按发 up；
 普通键被锁存的修饰键包裹后注入。导出 `controlCornerButton(icon, action)` 供 `Index` 复用角落按钮样式。
 
 ### 3.3 `KeyboardPanel`（[KeyboardPanel.ets](../../entry/src/main/ets/view/KeyboardPanel.ets)）
 
-应用内全功能 PC 键盘，半透明悬浮于画面底部（不挤压画面）。包含导航行、F1–F12 行、
-以及主键区 5 行。Shift/Ctrl/Alt 为粘滞锁存，Caps 有本地指示灯。支持**长按自动重复**
-（380ms 延迟后每 80ms 一对 down/up）。隐藏时释放所有仍按住的修饰键，避免 guest 卡键。
+应用内全功能 PC 键盘，两种模式（导航行切换，选择经 `settings.keyboardDocked` 持久化）：
+
+- **悬浮**（默认）：半透明悬浮于画面底部，不挤压画面、不触发 draw-rect refit。
+- **分屏**：不透明盘面（蓝牙键盘观感），方向随窗口纵横比——竖屏上下 50/50（键盘驻底），横屏左右分
+  （画面左、键盘右半屏，避免横屏上下对半把两侧都压到不可用）。行高按盘面高度按比例拉伸、键位随之放大；
+  画面真实缩小并由引擎 refit——竖屏平板上 4:3 画面几乎恰好铺满上半屏。
+- **紧凑**（分屏 + **盘面宽** < `KB_COMPACT_WIN_MAX_VP`〔500vp〕自动启用；盘面宽 = 横屏时窗口宽的一半）：
+  全布局重排为 9 行 × 最多 11 列——F 行拆两行、数字行只留 `` ` `` 与 1..0、标点与方向键合行、
+  右 Shift 并入左 Shift（同 keycode）。全键常驻可见，无符号切换页；悬浮模式不参与（仍为全布局）。
+
+两种模式都包含导航行、F1–F12 行、以及主键区 5 行。Shift/Ctrl/Alt 为粘滞锁存，Caps 有本地指示灯。
+支持**长按自动重复**（380ms 延迟后每 80ms 一对 down/up）。隐藏或模式切换（分支重挂载）时经
+`aboutToDisappear` 释放所有仍按住的修饰键，避免 guest 卡键。
 
 ### 3.4 `SettingsSheet`（[SettingsSheet.ets](../../entry/src/main/ets/view/SettingsSheet.ets)）
 
-设置面板内容，由 `Index` 的 `bindSheet` 承载（强制居中浮动卡片样式）。分组：
+设置面板内容，由 `Index` 的 `bindSheet` 承载（强制居中浮动卡片样式，卡宽 520vp；窗口更窄时
+按窗口宽收窄，且 CENTER 退化为底部样式）。分组：
 
 | 分组 | 内容 |
 | --- | --- |
