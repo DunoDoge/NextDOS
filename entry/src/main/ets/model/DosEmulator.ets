@@ -517,6 +517,30 @@ export class DosEmulator {
     return this.typeChain;
   }
 
+  /**
+   * Queues count backspace pairs on the same serialized chain as
+   * typeIntoGuest: IME-diff deletions must keep their order relative to
+   * paced inserts (a synchronous inject here would overtake characters
+   * still waiting in the queue and delete the wrong ones).
+   */
+  backspaceIntoGuest(count: number): Promise<void> {
+    if (!this.running || count <= 0) {
+      return Promise.resolve();
+    }
+    this.typeChain = this.typeChain.then(() => {
+      return this.tapBackspaces(count);
+    });
+    return this.typeChain;
+  }
+
+  private async tapBackspaces(count: number): Promise<void> {
+    for (let i = 0; i < count; i++) {
+      testNapi.injectKey(KeyCode.KEYCODE_DEL, true, false);
+      testNapi.injectKey(KeyCode.KEYCODE_DEL, false, false);
+      await DosEmulator.sleepMs(20);
+    }
+  }
+
   private async typeChars(text: string): Promise<void> {
     for (let i = 0; i < text.length; i++) {
       const ch: string = text.charAt(i);
