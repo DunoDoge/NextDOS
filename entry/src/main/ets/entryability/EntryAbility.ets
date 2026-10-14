@@ -10,25 +10,25 @@ export default class EntryAbility extends UIAbility {
     try {
       this.context.getApplicationContext().setColorMode(ConfigurationConstant.ColorMode.COLOR_MODE_NOT_SET);
     } catch (err) {
-      hilog.error(DOMAIN, 'testTag', 'Failed to set colorMode. Cause: %{public}s', JSON.stringify(err));
+      hilog.error(DOMAIN, 'NextDOS', 'Failed to set colorMode. Cause: %{public}s', JSON.stringify(err));
     }
-    hilog.info(DOMAIN, 'testTag', '%{public}s', 'Ability onCreate');
+    hilog.info(DOMAIN, 'NextDOS', '%{public}s', 'Ability onCreate');
   }
 
   onDestroy(): void {
-    hilog.info(DOMAIN, 'testTag', '%{public}s', 'Ability onDestroy');
+    hilog.info(DOMAIN, 'NextDOS', '%{public}s', 'Ability onDestroy');
   }
 
   onWindowStageCreate(windowStage: window.WindowStage): void {
     // Main window is created, set main page for this ability
-    hilog.info(DOMAIN, 'testTag', '%{public}s', 'Ability onWindowStageCreate');
+    hilog.info(DOMAIN, 'NextDOS', '%{public}s', 'Ability onWindowStageCreate');
 
     windowStage.loadContent('pages/Index', (err) => {
       if (err.code) {
-        hilog.error(DOMAIN, 'testTag', 'Failed to load the content. Cause: %{public}s', JSON.stringify(err));
+        hilog.error(DOMAIN, 'NextDOS', 'Failed to load the content. Cause: %{public}s', JSON.stringify(err));
         return;
       }
-      hilog.info(DOMAIN, 'testTag', 'Succeeded in loading the content.');
+      hilog.info(DOMAIN, 'NextDOS', 'Succeeded in loading the content.');
       if (deviceInfo.deviceType === '2in1') {
         this.applyDesktopTitleBar(windowStage);
       } else {
@@ -47,13 +47,13 @@ export default class EntryAbility extends UIAbility {
     try {
       const win = windowStage.getMainWindowSync();
       win.setWindowLayoutFullScreen(true).catch((err: BusinessError) => {
-        hilog.error(DOMAIN, 'testTag', 'Failed to extend behind system bars. Cause: %{public}s', JSON.stringify(err));
+        hilog.error(DOMAIN, 'NextDOS', 'Failed to extend behind system bars. Cause: %{public}s', JSON.stringify(err));
       });
       win.setWindowSystemBarEnable([]).catch((err: BusinessError) => {
-        hilog.error(DOMAIN, 'testTag', 'Failed to hide system bars. Cause: %{public}s', JSON.stringify(err));
+        hilog.error(DOMAIN, 'NextDOS', 'Failed to hide system bars. Cause: %{public}s', JSON.stringify(err));
       });
     } catch (err) {
-      hilog.error(DOMAIN, 'testTag', 'Failed to apply immersive mode. Cause: %{public}s', JSON.stringify(err));
+      hilog.error(DOMAIN, 'NextDOS', 'Failed to apply immersive mode. Cause: %{public}s', JSON.stringify(err));
     }
   }
 
@@ -66,7 +66,7 @@ export default class EntryAbility extends UIAbility {
     try {
       windowStage.getMainWindowSync().setWindowDecorVisible(false);
     } catch (err) {
-      hilog.error(DOMAIN, 'testTag', 'Failed to hide window decor. Cause: %{public}s', JSON.stringify(err));
+      hilog.error(DOMAIN, 'NextDOS', 'Failed to hide window decor. Cause: %{public}s', JSON.stringify(err));
     }
     try {
       // Light three-button glyphs so they stay visible on the black title bar.
@@ -77,22 +77,22 @@ export default class EntryAbility extends UIAbility {
       };
       windowStage.getMainWindowSync().setDecorButtonStyle(buttonStyle);
     } catch (err) {
-      hilog.error(DOMAIN, 'testTag', 'Failed to set decor button style. Cause: %{public}s', JSON.stringify(err));
+      hilog.error(DOMAIN, 'NextDOS', 'Failed to set decor button style. Cause: %{public}s', JSON.stringify(err));
     }
   }
 
   onWindowStageDestroy(): void {
     // Main window is destroyed, release UI related resources
-    hilog.info(DOMAIN, 'testTag', '%{public}s', 'Ability onWindowStageDestroy');
+    hilog.info(DOMAIN, 'NextDOS', '%{public}s', 'Ability onWindowStageDestroy');
   }
 
   onForeground(): void {
     // Ability has brought to foreground
-    hilog.info(DOMAIN, 'testTag', '%{public}s', 'Ability onForeground');
+    hilog.info(DOMAIN, 'NextDOS', '%{public}s', 'Ability onForeground');
   }
 
   onBackground(): void {
     // Ability has back to background
-    hilog.info(DOMAIN, 'testTag', '%{public}s', 'Ability onBackground');
+    hilog.info(DOMAIN, 'NextDOS', '%{public}s', 'Ability onBackground');
   }
 }
