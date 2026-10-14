@@ -23,6 +23,13 @@ const IS_DESKTOP: boolean = deviceInfo.deviceType === '2in1';
 // task chain, before the page attaches to the window, and a toast fired
 // there is dropped silently (measured on emulator).
 const BOOT_WARNING_TOAST_DELAY_MS: number = 2000;
+// IME field sentinel: one invisible char (zero-width space, untypeable from
+// any keyboard and dropped by DosEmulator.charToKeyCode) held at the left
+// edge of the field while it is focused. A soft-keyboard backspace on an
+// EMPTY field produces no content change at all, so deletion would be
+// structurally unreachable; deleting the sentinel IS that missing change
+// event (see handleImeChange).
+const IME_SENTINEL: string = '\u200B';
 
 @Entry
 @Component
@@ -51,11 +58,20 @@ struct Index {
   // field, so the system soft keyboard stays down and text input goes
   // through the in-app keyboard instead.
   @StorageLink('settings.blockSoftKeyboard') blockSoftKeyboard: boolean = false;
-  // Text buffer of the invisible IME field (imeLayer). Each content change
-  // is diffed against imeLastBuffer and forwarded to the guest as keystrokes
-  // (see handleImeChange); reset once it grows past 128 chars.
+  // Text buffer of the invisible IME field (imeLayer), kept equal to the
+  // field's live content on every change (controlled field: the TextArea
+  // param must never lag the content, or a remount restores stale text and
+  // the next diff fires phantom backspaces). imeLastBuffer mirrors it as
+  // the diff baseline; both shrink back to the sentinel once it grows past
+  // 128 chars.
   @State imeBuffer: string = '';
   private imeLastBuffer: string = '';
+  // Timestamp of the last sentinel-only deletion accepted as a backstroke
+  // (see handleImeChange): input methods report one backspace on an empty
+  // field TWICE (composing-region clear, then the content delete itself),
+  // both times as value === ''; without same-stroke dedup each physical
+  // press would inject two guest DELs.
+  private lastSentinelDelMs: number = 0;
   // True while the IME field holds focus; key events then bubble from it to
   // the root handler, which must skip them to avoid double injection.
   private imeFocused: boolean = false;
@@ -344,10 +360,22 @@ struct Index {
 
   /**
    * Forwards IME field content changes to the guest as keystrokes. System
-   * soft keyboards do not deliver key events, only committed/composing text,
-   * so the old vs. new buffer content is diffed: deleted characters become
-   * backspace presses, inserted text is typed with the paced down/up pairs
-   * of DosEmulator.typeIntoGuest (which maps every printable ASCII char).
+   * soft keyboards do not deliver key events, only committed/composing
+   * text, so the old vs. new buffer content is diffed: deleted characters
+   * become backspace presses (serialized on the same queue as typed text,
+   * see DosEmulator.backspaceIntoGuest), inserted text is typed with the
+   * paced down/up pairs of DosEmulator.typeIntoGuest (which maps every
+   * printable ASCII char).
+   *
+   * Two invariants make the two input channels compose (the in-app
+   * KeyboardPanel and hardware keys inject scancodes directly and never
+   * touch this buffer): the baseline always equals the live field content
+   * — imeBuffer is written on every change, so a field remount restores
+   * exactly what the diff remembers — and a deletion counts guest DELs
+   * 1:1 regardless of which channel typed the characters. The sentinel
+   * seeded at focus (see imeLayer) guarantees the never-empty field, so
+   * backspacing past everything the IME typed still reports a change and
+   * deletes guest characters typed through the other channels.
    */
   private handleImeChange(value: string): void {
     const prev: string = this.imeLastBuffer;
@@ -367,22 +395,68 @@ struct Index {
     const deleted: number = prev.length - prefix - suffix;
     const inserted: string = value.substring(prefix, value.length - suffix);
     this.imeLastBuffer = value;
+    this.imeBuffer = value;
     if (deleted > 32) {
       // Selection-wide wipe (select-all / programmatic clear), not typing:
       // swallow it instead of flooding the guest with backspaces.
+      this.reseedSentinel(value);
       return;
     }
-    for (let i = 0; i < deleted; i++) {
-      this.emu.injectKey(KeyCode.KEYCODE_DEL, true);
-      this.emu.injectKey(KeyCode.KEYCODE_DEL, false);
+    let dels: number = deleted;
+    if (prev.startsWith(IME_SENTINEL)) {
+      // prev carries the sentinel; losing it is not a guest character. The
+      // sentinel-only field is the one case where its loss can mean a
+      // backstroke: as a PURE deletion (value === '') it is exactly the
+      // soft-keyboard backspace on an otherwise empty field, which must
+      // still delete guest characters typed through the other channels.
+      // With inserted text alongside (the caret sat before the sentinel, or
+      // the IME replaced the whole content) the loss is typing collateral:
+      // keying the backstroke on prev's shape alone fired a phantom DEL on
+      // the first soft-keyboard character after a fresh focus, eating the
+      // last character typed through the in-app panel.
+      if (prev.length === 1) {
+        if (value === '') {
+          // Same-stroke dedup: the second '' of an IME's double report
+          // arrives within a frame or two of the first. Human repeat
+          // presses are an order of magnitude slower, so a short window
+          // swallows the echo without eating real fast backspacing.
+          const now: number = Date.now();
+          if (now - this.lastSentinelDelMs <= 80) {
+            dels = 0;
+          } else {
+            dels = 1;
+            this.lastSentinelDelMs = now;
+          }
+        } else {
+          dels = 0;
+        }
+      } else if (!value.startsWith(IME_SENTINEL)) {
+        dels = deleted - 1;
+      }
+    }
+    if (dels > 0) {
+      this.emu.backspaceIntoGuest(dels);
     }
     if (inserted.length > 0) {
       this.emu.typeIntoGuest(inserted);
     }
+    this.reseedSentinel(value);
     if (value.length > 128) {
-      // Keep the invisible buffer small; the next change re-diffs from empty.
-      this.imeLastBuffer = '';
-      this.imeBuffer = '';
+      // Keep the invisible buffer small; the diff restarts from the
+      // sentinel. imeLastBuffer goes first so the onChange this program-
+      // matic write may trigger finds the baseline already equal.
+      this.imeLastBuffer = IME_SENTINEL;
+      this.imeBuffer = IME_SENTINEL;
+    }
+  }
+
+  /** Restores the sentinel when a change emptied the field, keeping the
+   * never-empty invariant (and the baseline in step with the param write,
+   * so the onChange the write itself may fire exits on value === prev). */
+  private reseedSentinel(value: string): void {
+    if (value === '') {
+      this.imeLastBuffer = IME_SENTINEL;
+      this.imeBuffer = IME_SENTINEL;
     }
   }
 
@@ -403,8 +477,11 @@ struct Index {
       return;
     }
     if (DosKeyMap.isImeHandled(event.keyCode)) {
-      // Deletion at an empty buffer produces no content change (no onChange),
-      // so backspaces pressed past the buffer start are forwarded directly.
+      // Text keys (and DEL, which edits the field content) are delivered by
+      // the content diff. The direct-injection case below is a belt for a
+      // baseline that predates the sentinel seeding: with the sentinel the
+      // buffer is never empty while focused, so a DEL always produces a
+      // content change. Double injection must never happen here.
       if ((event.keyCode === KeyCode.KEYCODE_DEL || event.keyCode === KeyCode.KEYCODE_FORWARD_DEL) &&
         this.imeLastBuffer.length === 0 && event.type === KeyType.Down) {
         this.emu.injectKey(event.keyCode, true);
@@ -1029,19 +1106,45 @@ struct Index {
       })
       .onFocus(() => {
         this.imeFocused = true;
+        // Sentinel epoch (see IME_SENTINEL): while focused the field must
+        // never be empty, or a soft-keyboard backspace edits nothing and
+        // reports no change at all. Seeded only when empty — a refocused
+        // field keeps its content (and its sentinel) from the previous
+        // session. The baseline goes first so the onChange the param write
+        // may trigger exits on value === prev.
+        if (this.imeBuffer === '') {
+          this.imeLastBuffer = IME_SENTINEL;
+          this.imeBuffer = IME_SENTINEL;
+        }
       })
       .onBlur(() => {
         this.imeFocused = false;
       })
       // Tab must be injected before the focus stage consumes it (onKeyEvent
       // never sees it), and the direction keys must not move the caret or drive
-      // traversal; Enter stays on the IME commit path below. A modal keeps the
-      // keys, exactly as on the root.
+      // traversal; Enter stays on the IME commit path below. The DEL family is
+      // injected and CONSUMED here as well: with the field focused, hardware
+      // key events are routed through the active input method, and a composing
+      // IME swallows them (no content change reaches the field, nothing
+      // reaches the guest — backspace died exactly there). Consuming the event
+      // also keeps the field content untouched, so exactly one guest DEL per
+      // press: the diff counts only soft-keyboard edits, and every channel's
+      // delete decrements the guest by one. A modal keeps the keys, exactly as
+      // on the root.
       .onKeyPreIme((event: KeyEvent): boolean => {
         if (this.modalOpen()) {
           return false;
         }
-        return this.injectGuestOwnedKey(event, false);
+        if (this.injectGuestOwnedKey(event, false)) {
+          return true;
+        }
+        if ((event.keyCode === KeyCode.KEYCODE_DEL ||
+          event.keyCode === KeyCode.KEYCODE_FORWARD_DEL) &&
+          (event.type === KeyType.Down || event.type === KeyType.Up)) {
+          this.emu.injectKey(event.keyCode, event.type === KeyType.Down);
+          return true;
+        }
+        return false;
       })
       .onKeyEvent((event: KeyEvent) => {
         this.handleImeKeyEvent(event);
