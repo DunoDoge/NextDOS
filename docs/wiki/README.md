@@ -45,7 +45,7 @@ NextDOS 是运行在 HarmonyOS 平台的 DOS 模拟器应用。它把 [DOSBox St
 | 特性 | 入口/实现要点 |
 | --- | --- |
 | DOSBox Staging 内核 | 独立原生线程运行，画面按像素长宽比（PAR）等比完整显示 |
-| 目录挂载（C: 盘） | `DocumentViewPicker` DOWNLOAD 模式获取下载目录 → `[autoexec] mount c` |
+| 目录挂载（C: 盘） | `DocumentSelectMode.FOLDER` 系统目录选择器（`MountFolder`，授权持久化）→ `[autoexec] mount c` |
 | 光盘挂载（D: 盘） | `CdImage` 暂存镜像到沙箱槽位 → `mount d … -t iso` 注入 |
 | 应用内 PC 键盘 | [KeyboardPanel.ets](../../entry/src/main/ets/view/KeyboardPanel.ets) |
 | 系统软键盘输入 | [Index.ets](../../entry/src/main/ets/pages/Index.ets) `imeLayer` + 内容差分 |
