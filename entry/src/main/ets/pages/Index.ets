@@ -23,6 +23,11 @@ const IS_DESKTOP: boolean = deviceInfo.deviceType === '2in1';
 // task chain, before the page attaches to the window, and a toast fired
 // there is dropped silently (measured on emulator).
 const BOOT_WARNING_TOAST_DELAY_MS: number = 2000;
+// Docked keyboards split the window bottom-half only when it is at least
+// this tall: every tablet (both orientations) and portrait phones qualify
+// and get the natural wide deck; a landscape phone (~360vp tall) would
+// leave half-height rows of ~20vp, so those go side-by-side instead.
+const KB_BOTTOM_SPLIT_MIN_WIN_H: number = 550;
 // IME field sentinel: one invisible char (zero-width space, untypeable from
 // any keyboard and dropped by DosEmulator.charToKeyCode) held at the left
 // edge of the field while it is focused. A soft-keyboard backspace on an
@@ -96,13 +101,13 @@ struct Index {
   @State navInsetVp: number = 0;
   // Window metrics in vp (0 until first read): the settings sheet clamps
   // its 520vp card to winWidthVp, and the docked keyboard split direction
-  // follows winLandscape (portrait stacks canvas above deck, landscape
-  // puts canvas left / deck right). Refreshed via windowSizeChange on every
-  // device path — avoidAreaChange proved NOT to fire on phone rotation,
-  // which left a stale portrait width in the landscape sheet (measured on
-  // device).
+  // follows winHeightVp (>= KB_BOTTOM_SPLIT_MIN_WIN_H stacks canvas above
+  // a bottom-half deck; shorter landscape phones go side-by-side).
+  // Refreshed via windowSizeChange on every device path — avoidAreaChange
+  // proved NOT to fire on phone rotation, which left a stale portrait width
+  // in the landscape sheet (measured on device).
   @State winWidthVp: number = 0;
-  @State winLandscape: boolean = false;
+  @State winHeightVp: number = 0;
   private emu: DosEmulator = new DosEmulator();
   private autoPaused: boolean = false;
   private mainWindow: window.Window | null = null;
@@ -299,7 +304,7 @@ struct Index {
     }
   }
 
-  /** Refreshes winWidthVp / winLandscape from the live window
+  /** Refreshes winWidthVp / winHeightVp from the live window
    * rect. Called on windowSizeChange (rotation, fold, free resize) and once
    * at listener setup; a stale width here visibly breaks the settings sheet
    * clamp and the docked-split direction. */
@@ -314,7 +319,7 @@ struct Index {
         return;
       }
       this.winWidthVp = rect.width / density;
-      this.winLandscape = rect.width >= rect.height;
+      this.winHeightVp = rect.height / density;
     } catch (error) {
       hilog.error(0x0000, TAG, 'read window metrics failed: %{public}s', JSON.stringify(error));
     }
@@ -1309,17 +1314,28 @@ struct Index {
       .backgroundColor('#1A1A20')
   }
 
+  /** Docked split direction: bottom-half whenever the window is tall enough
+   * for half-height keyboard rows — every tablet (both orientations) and
+   * portrait phones, all giving the deck its natural wide-short shape.
+   * Only short landscape phones (~360vp tall, half-height rows of ~20vp)
+   * need the side-by-side split. False until the first window read; the
+   * panel cannot be open that early. */
+  private dockedBottomSplit(): boolean {
+    return this.winHeightVp >= KB_BOTTOM_SPLIT_MIN_WIN_H;
+  }
+
   /** Compact-layout predicate for the docked deck, judged by the DECK
-   * width: half the window in the landscape side-by-side split, the full
-   * width in portrait. A 772vp landscape phone halves to a 386vp deck that
-   * needs the compact rows exactly like a 360vp portrait phone; a portrait
-   * tablet's 800vp deck keeps the full layout. False until the first
-   * window read, matching the original window-width guard. */
+   * width: half the window in the side-by-side split, the full width in
+   * the bottom-half split. A 772vp landscape phone halves to a 386vp deck
+   * that needs the compact rows exactly like a 360vp portrait phone; a
+   * landscape tablet's 1000vp+ bottom deck keeps the full layout. False
+   * until the first window read, matching the original window-width
+   * guard. */
   private dockedDeckCompact(): boolean {
     if (this.winWidthVp <= 0) {
       return false;
     }
-    const deckW: number = this.winLandscape ? this.winWidthVp / 2 : this.winWidthVp;
+    const deckW: number = this.dockedBottomSplit() ? this.winWidthVp : this.winWidthVp / 2;
     return deckW < KB_COMPACT_WIN_MAX_VP;
   }
 
@@ -1340,7 +1356,7 @@ struct Index {
       // relayout, children keep their identity), and the docked deck is a
       // conditional CHILD, never an ancestor of the canvas.
       Flex({
-        direction: this.keyboardVisible && this.keyboardDocked && this.winLandscape
+        direction: this.keyboardVisible && this.keyboardDocked && !this.dockedBottomSplit()
           ? FlexDirection.Row : FlexDirection.Column
       }) {
         // Canvas region. layoutWeight takes the main axis whichever way
@@ -1352,22 +1368,24 @@ struct Index {
         .height('100%')
         .layoutWeight(1)
 
-        // Docked deck (touch devices only). Portrait: it sits BELOW the
-        // canvas stack, whose layoutWeight yields it the bottom half —
+        // Docked deck (touch devices only). Tall windows: it sits BELOW
+        // the canvas stack, whose layoutWeight yields it the bottom half —
         // onAreaChange then reports the smaller canvas and the engine
         // refits its draw rect, the same resize path the soft keyboard's
-        // RESIZE avoid mode exercises. Landscape: side-by-side — canvas
-        // left, deck right half; halving a ~360vp-tall landscape window
-        // horizontally instead would starve both halves (~160vp deck rows,
-        // ~213x160 picture). keyboardVisible can only be true on touch
-        // devices (2in1 mounts no toggle for it), so no IS_DESKTOP guard
-        // is needed.
+        // RESIZE avoid mode exercises; the deck keeps the natural
+        // wide-short keyboard shape (a 1024x688 landscape tablet renders
+        // ~66x41vp full-layout keys). Short landscape phones: side-by-side
+        // — canvas left, deck right half, because halving a ~360vp-tall
+        // window would starve both halves (~160vp deck rows, ~213x160
+        // picture). keyboardVisible can only be true on touch devices
+        // (2in1 mounts no toggle for it), so no IS_DESKTOP guard is
+        // needed.
         if (!IS_DESKTOP && this.keyboardVisible && this.keyboardDocked) {
           Column() {
             this.dockedKeyboardPanel()
           }
-          .width(this.winLandscape ? '50%' : '100%')
-          .height(this.winLandscape ? '100%' : '50%')
+          .width(this.dockedBottomSplit() ? '100%' : '50%')
+          .height(this.dockedBottomSplit() ? '50%' : '100%')
         }
       }
       .width('100%')

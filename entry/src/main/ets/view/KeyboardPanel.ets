@@ -14,6 +14,12 @@ enum KbSticky {
  * 14-column rows still make usable keys. */
 export const KB_COMPACT_WIN_MAX_VP: number = 500;
 
+/** Cap on the docked row-height stretch factor. A tall deck (portrait
+ * tablet, landscape bottom half) would otherwise stretch rows into
+ * vertical bars — past the cap the leftover height centers the deck
+ * content instead, keeping key proportions keyboard-like. */
+const KB_ROW_SCALE_MAX: number = 2.0;
+
 /** One virtual key: HarmonyOS keycode plus its layout data. */
 export class KbKey {
   id: string = '';
@@ -38,11 +44,12 @@ export class KbKey {
  *   readable underneath; the canvas keeps its full size, no setCanvasSize
  *   refit happens while typing.
  * - Docked (split view): opaque deck filling the bottom half of the window
- *   as a sibling BELOW the canvas stack. The canvas genuinely shrinks and
- *   the engine refits its draw rect through the same setCanvasSize path the
- *   soft keyboard's RESIZE avoid mode exercises; rows stretch proportionally
- *   to the deck height, so the keys render much bigger (the portrait-tablet
- *   case the mode exists for: a 4:3 picture nearly fills the top half).
+ *   (or its right half on short landscape phones, see Index) as a sibling
+ *   BELOW/BESIDE the canvas stack. The canvas genuinely shrinks and the
+ *   engine refits its draw rect through the same setCanvasSize path the
+ *   soft keyboard's RESIZE avoid mode exercises; rows scale to the deck
+ *   height with a 2x cap (KB_ROW_SCALE_MAX) — a taller deck centers its
+ *   content instead of stretching keys into vertical bars.
  * - Compact (docked + narrow window): under KB_COMPACT_WIN_MAX_VP the full
  *   PC layout re-flows into 9 rows of at most 11 columns, because a phone
  *   portrait deck is tall and narrow — columns trade for rows. F row splits
@@ -90,6 +97,9 @@ export struct KeyboardPanel {
   @State altOn: boolean = false;
   @State capsOn: boolean = false;
   @State pressedId: string = '';
+  // Measured deck height (vp): the docked row scale derives from it. 0
+  // until the first layout pass; rowH falls back to base heights then.
+  @State deckH: number = 0;
   private navRow: KbKey[] = [];
   private fnRow: KbKey[] = [];
   private row1: KbKey[] = [];
@@ -469,17 +479,40 @@ export struct KeyboardPanel {
       }, (key: KbKey) => key.id)
     }
     .width('100%')
-    .height(heightVp)
-    // Docked: the fixed vp height doubles as the row's share weight, so all
-    // rows stretch proportionally to fill the half-screen deck; a weight of
-    // 0 keeps the fixed height in floating mode.
-    .layoutWeight(this.docked ? heightVp : 0)
+    .height(this.rowH(heightVp))
   }
 
   // Compact decks squeeze 11 columns into ~350vp: a 3vp gap buys ~1vp of
   // key width per row; wide decks keep the roomier 4vp.
   private rowGapVp(): number {
     return this.compact ? 3 : (this.docked ? 4 : 3);
+  }
+
+  // Base-height sums of all rendered rows (chrome nav row included), full
+  // and compact layouts, used to turn the measured deck height into a row
+  // scale.
+  private static readonly BASE_SUM_FULL: number = 218;
+  private static readonly BASE_SUM_COMPACT: number = 270;
+
+  /**
+   * Rendered height of one row. Floating keeps the fixed base height; the
+   * docked deck scales every base by (deck content height / base sum),
+   * capped at KB_ROW_SCALE_MAX. Uncapped, the scaled heights fill the deck
+   * exactly; capped (tall decks), the sum falls short and the centered
+   * column (see build) turns the leftover into deck breathing room instead
+   * of stretching keys into vertical bars.
+   */
+  private rowH(base: number): number {
+    if (!this.docked || this.deckH <= 0) {
+      return base;
+    }
+    const gaps: number = (this.compact ? 8 : 6) * this.rowGapVp();
+    const available: number = this.deckH - 6 - gaps;
+    const sum: number = this.compact
+      ? KeyboardPanel.BASE_SUM_COMPACT
+      : KeyboardPanel.BASE_SUM_FULL;
+    const scale: number = Math.min(available / sum, KB_ROW_SCALE_MAX);
+    return Math.round(base * Math.max(scale, 0.5));
   }
 
   build() {
@@ -528,8 +561,7 @@ export struct KeyboardPanel {
         })
       }
       .width('100%')
-      .height(26)
-      .layoutWeight(this.docked ? 26 : 0)
+      .height(this.rowH(26))
 
       if (this.compact) {
         this.keyRow(this.cFn1, 26)
@@ -551,8 +583,14 @@ export struct KeyboardPanel {
     }
     .width('100%')
     // Floating keeps content height (auto) inside the bottom-anchored Stack;
-    // docked fills the half-window box its parent reserves below the canvas.
+    // docked fills the box its parent reserves. Centered so a capped row
+    // sum (KB_ROW_SCALE_MAX) leaves breathing room top and bottom instead
+    // of piling it at the bottom edge.
     .height(this.docked ? '100%' : 'auto')
+    .justifyContent(this.docked ? FlexAlign.Center : FlexAlign.Start)
+    .onAreaChange((_oldArea: Area, newArea: Area): void => {
+      this.deckH = Number(newArea.height);
+    })
     .padding({ left: 6, right: 6, top: 6 })
   }
 }
