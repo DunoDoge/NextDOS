@@ -1,8 +1,14 @@
 import { common } from '@kit.AbilityKit';
 import { BusinessError } from '@kit.BasicServicesKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
+import { display, window } from '@kit.ArkUI';
 
 const TAG = 'NextDOS';
+// Designed card width; clamped to the window width (minus margins) on
+// narrow windows so portrait phones don't clip the card, exactly like the
+// settings sheet's clamp in Index.settingsSheetWidthVp.
+const CARD_WIDTH_VP: number = 520;
+const CARD_MARGIN_VP: number = 32;
 
 /**
  * One tappable row of the license page component list. Plain class (not an
@@ -39,6 +45,19 @@ class LicenseEntry {
 @Component
 export struct LicenseSheet {
   onClose: () => void = () => {};
+  // Card width, clamped once the window is measured (2in1 windows are
+  // freely resizable; phone/tablet windows equal the display).
+  @State cardWidthVp: number = CARD_WIDTH_VP;
+
+  aboutToAppear(): void {
+    window.getLastWindow(getContext(this)).then((win: window.Window): void => {
+      const rect = win.getWindowProperties().windowRect;
+      this.cardWidthVp = Math.min(CARD_WIDTH_VP, rect.width / display.getDefaultDisplaySync().densityPixels - CARD_MARGIN_VP);
+    }).catch((error: BusinessError) => {
+      hilog.error(0x0000, TAG, 'read window for license card failed: %{public}s', error.message);
+    });
+  }
+
   private entries: LicenseEntry[] = [
     new LicenseEntry('NextDOS', '本应用', 'GPL-2.0-or-later', 'https://github.com/DunoDoge/NextDOS'),
     new LicenseEntry('DOSBox Staging', 'DOS 模拟器引擎（ohos 分支）', 'GPL-2.0-or-later',
@@ -181,7 +200,7 @@ export struct LicenseSheet {
         .scrollBar(BarState.Auto)
         .margin({ top: 16 })
       }
-      .width(520)
+      .width(this.cardWidthVp)
       // Definite height: layoutWeight on the Scroll below only works when the
       // parent's main-axis size is fixed — an adaptive-height card would make
       // the Scroll measure to full content height and get clipped instead of
