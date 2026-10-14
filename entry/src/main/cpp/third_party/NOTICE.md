@@ -1,5 +1,14 @@
 # Third-party components
 
+## Provenance status (local-only patches)
+
+Two patches exist ONLY in this vendored tree and are NOT commits on the
+fork's `ohos` branch (details in the entries below): the UTF-8 autoexec
+passthrough patch and the empty-cue-parse guard. Every other deviation
+listed here is tagged with its branch commit. Upstreaming these two to
+<https://github.com/DunoDoge/dosbox-staging> is an open task; until then,
+updating the vendored tree from the branch tip re-applies them by hand.
+
 ## DOSBox Staging (emulator engine, embed build)
 - Path: `entry/src/main/cpp/third_party/dosbox-staging/`
 - Source: https://github.com/DunoDoge/dosbox-staging (fork of
