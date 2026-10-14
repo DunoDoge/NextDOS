@@ -1,3 +1,7 @@
 {
-  "allowToBackupRestore": true
+  "allowToBackupRestore": true,
+  "excludes": [
+    "/data/storage/el2/base/files/cdrom/",
+    "/data/storage/el2/base/files/resources/"
+  ]
 }
