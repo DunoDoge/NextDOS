@@ -52,6 +52,10 @@ export struct ControlKeyBar {
   @State ctrlOn: boolean = false;
   @State altOn: boolean = false;
   @State pressedId: string = '';
+  // Measured bar width (vp): each row is 7 keys + a Blank, and the keys are
+  // width-adaptive so a portrait-phone bar never overflows (fixed 48vp keys
+  // need ~440vp with the side chrome; a portrait window has ~304).
+  @State barW: number = 0;
   private left1: ControlKeyDef[] = [];
   private right1: ControlKeyDef[] = [];
   private left2: ControlKeyDef[] = [];
@@ -136,13 +140,30 @@ export struct ControlKeyBar {
     }
   }
 
+  // Roomier gaps only while the bar has slack; narrow bars spend the pixels
+  // on key width instead.
+  private gapVp(): number {
+    return this.barW < 460 ? 4 : 8;
+  }
+
+  /** Adaptive key width: fixed 48 while the row fits with slack (landscape
+   * phone / tablet — today's look), otherwise the even share of the bar
+   * with a 30vp floor so labels stay readable; 7 keys can never overflow. */
+  private keyWVp(): number {
+    if (this.barW <= 0) {
+      return 48;
+    }
+    const unit: number = (this.barW - 6 * this.gapVp()) / 7;
+    return Math.max(30, Math.min(48, unit));
+  }
+
   @Builder
   keyButton(key: ControlKeyDef) {
     Text(key.label)
-      .width(48)
+      .width(this.keyWVp())
       .height('100%')
       .textAlign(TextAlign.Center)
-      .fontSize(16)
+      .fontSize(this.keyWVp() < 44 ? 14 : 16)
       .fontColor(this.isLit(key) ? '#FFD34D' : '#E6E6E6')
       .opacity(this.pressedId === key.id ? 0.4 : 1)
       .onTouch((event: TouchEvent) => {
@@ -158,7 +179,7 @@ export struct ControlKeyBar {
 
   @Builder
   keyRow(left: ControlKeyDef[], right: ControlKeyDef[]) {
-    Row({ space: 8 }) {
+    Row({ space: this.gapVp() }) {
       ForEach(left, (key: ControlKeyDef) => {
         this.keyButton(key)
       }, (key: ControlKeyDef) => key.id)
@@ -179,5 +200,8 @@ export struct ControlKeyBar {
       this.keyRow(this.left2, this.right2)
     }
     .width('100%')
+    .onAreaChange((_oldArea: Area, newArea: Area): void => {
+      this.barW = Number(newArea.width);
+    })
   }
 }
