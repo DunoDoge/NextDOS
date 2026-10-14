@@ -52,6 +52,12 @@
         "label": "$string:EntryAbility_label",
         "startWindowIcon": "$media:icon_startwindow",
         "startWindowBackground": "$color:start_window_background",
+        // Sensor-following rotation gated by the control-center rotation
+        // switch. Without this field a phone window stays in its launch
+        // orientation and never rotates (tablets rotate by system policy
+        // anyway) — that asymmetry is why phones could not get back to
+        // landscape after the forced-landscape code was removed.
+        "orientation": "auto_rotation_restricted",
         "exported": true,
         "skills": [
           {
