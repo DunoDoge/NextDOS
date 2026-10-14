@@ -21,7 +21,7 @@ extern "C" __attribute__((constructor)) void RegisterEntryModule(void)
 }
 ```
 
-- `ModuleInit(env, exports)` 用 `napi_define_properties()` 一次性挂上 **17 个**导出函数。
+- `ModuleInit(env, exports)` 用 `napi_define_properties()` 一次性挂上 **15 个**导出函数。
 - ArkTS 侧通过 oh-package 依赖 `libentry.so`（[entry/oh-package.json5](../../entry/oh-package.json5)
   → `file:./src/main/cpp/types/libentry`）拿到类型声明与绑定。
 
@@ -35,8 +35,6 @@ extern "C" __attribute__((constructor)) void RegisterEntryModule(void)
 | `init` | `Init` | `configPath: string` | `void` | 仅做契约占位，不做实事（真正的活儿在 `start`） |
 | `start` | `Start` | `configPath: string` | `void` | `nextdos::host_start(path)` |
 | `stop` | `Stop` | — | `void` | `nextdos::host_stop()` |
-| `mountImage` | `MountImage` | `harddiskPath: string` | `number` | **未接线**，恒定返回 `-1`（镜像挂载由生成的 `[autoexec] mount d` 完成） |
-| `unmountImage` | `UnmountImage` | — | `void` | no-op |
 | `mountFolder` | `MountFolder` | `dir: string` | `number` | 恒定返回 `0`（挂载由 config 的 `[autoexec] mount c` 完成） |
 | `unmountFolder` | `UnmountFolder` | — | `void` | no-op |
 | `reset` | `Reset` | — | `void` | `nextdos::host_restart()`（stop + start 同 config） |
@@ -44,9 +42,8 @@ extern "C" __attribute__((constructor)) void RegisterEntryModule(void)
 | `resume` | `Resume` | — | `void` | `nextdos::host_resume()` |
 | `injectKey` | `InjectKey` | `keyCode: number, down: boolean, shift?: boolean` | `void` | `nextdos::input_inject_key(keyCode, down, shift, false, false)` |
 | `injectMouse` | `InjectMouse` | `action, button, x, y, relX, relY`（6 参） | `void` | `nextdos::input_inject_mouse(...)`；`action` 0=移动 1=按键 2=滚轮 |
-| `getFrame` | `GetFrame` | — | `FrameInfo` | `nextdos::video_get_frame(...)` → 组 `ArrayBuffer` |
+| `getFrame` | `GetFrame` | — | `FrameInfo` | `video_get_frame_info` 探帧尺寸 → 取复用 `ArrayBuffer` → `video_get_frame` 拷入 |
 | `getFrameSeq` | `GetFrameSeq` | — | `number` | `nextdos::video_get_frame_seq()`：最新帧 seq（0 = 尚无帧），零拷贝轮询 |
-| `getStatus` | `GetStatus` | — | `EmulatorStatus` | `host_is_running()` + `host_is_paused()` |
 | `setCanvasSize` | `SetCanvasSize` | `width: number, height: number` | `void` | `nextdos::video_set_canvas_size(...)`（vp 尺寸，引导引擎重算 draw rect） |
 | `getMouseLayout` | `GetMouseLayout` | — | `MouseLayout` | `ohos_get_mouse_layout(...)` |
 
@@ -76,22 +73,18 @@ interface FrameInfo {
 
 `GetFrame` 的实现细节：
 
-- 使用模块级暂存 `g_scratch`（`MAX_FRAME_BYTES = 1600*1200*4`，与
-  `OhosRenderBackend::MaxWidth/MaxHeight` 对齐）；
-- 未取到帧时 `byteLength=0`、`width/height/seq` 保持 0；
-- 每次调用都**新建** `ArrayBuffer` 并 `memcpy`（跨线程快照，不共享原生内存）。
+- 先 `video_get_frame_info` 探最新帧尺寸，再按 `width*height*4` 取用**同一个**外部
+  （external）`ArrayBuffer`——帧尺寸不变就整块复用，无每帧分配、无二次拷贝；模式切换
+  时重建（被丢弃的旧 `ArrayBuffer` 由 finalize 回调在 GC 后释放原生内存）；
+- `buffer` 的字节由原生侧持有并会在**下一次 `getFrame()` 调用时被覆写**：调用方
+  （`EmulatorScreen.updateFrame`）必须在同一 tick 内同步消费（`writeBufferToPixelsSync`），
+  不得持有引用——这是 `DosEmulator.tick` 注释里固化的契约；
+- 探测与取帧之间模式变化会使拷贝失败，按"本 tick 无帧"上报（seq/宽高归 0），下一次
+  轮询自愈。
 
 因此帧循环（`DosEmulator.tick`）先调 `getFrameSeq()` 做零拷贝轮询，seq 未变化
-（guest 画面静止）时**不得**调用 `getFrame()`——整帧拷贝 + ArrayBuffer 分配发生在
-UI 线程，空闲时的持续负载会推高点击/触摸响应时延（上架检测项）。
-
-### `EmulatorStatus`
-
-```ts
-interface EmulatorStatus { running: boolean; paused: boolean; }
-```
-
-`paused` 在未运行时恒为 false（`host_is_paused()` 内含 running 判断）。
+（guest 画面静止）时**不得**调用 `getFrame()`——整帧拷贝发生在 UI 线程，空闲时的
+持续负载会推高点击/触摸响应时延（上架检测项）。
 
 ### `MouseLayout`
 
@@ -120,7 +113,6 @@ ArkTS Startup
   ├─ entry.start(configPath)               // 派生引擎线程（异步返回）
   │     └─ 引擎线程: 部署资源 -> embed_main -> SHELL_InitAndRun（阻塞）
   ├─ [16ms 帧循环] entry.getFrameSeq()        // 零拷贝轮询；变化时才 getFrame()
-  │                entry.getStatus()        // running/paused
   ├─ entry.setCanvasSize(w, h)             // 布局变化时
   ├─ entry.getMouseLayout()                // 坐标反算
   ├─ entry.injectKey / injectMouse         // 用户输入
@@ -138,11 +130,6 @@ ArkTS Startup
 | --- | --- |
 | [DosEmulator.ets](../../entry/src/main/ets/model/DosEmulator.ets) | `initResources` / `init` / `start` / `stop` / `reset` / `pause` / `resume` / `mountFolder` / `unmountFolder` / `injectKey` / `injectMouse` / `getFrameSeq` / `getFrame` / `setCanvasSize` / `getMouseLayout` |
 | [EmulatorScreen.ets](../../entry/src/main/ets/view/EmulatorScreen.ets) | 仅 `import type { FrameInfo, MouseLayout }`；输入与坐标映射经 `DosEmulator` 间接调用 |
-
-当前 ArkTS 侧**未使用**的导出：
-
-- `getStatus`：`DosEmulator` 自行维护 `running` / `paused` 状态；
-- `mountImage` / `unmountImage`：原生层未接线（恒返回 `-1` / no-op）。
 
 > 所有挂载都由 [DosEmulator.writeConfig](../../entry/src/main/ets/model/DosEmulator.ets)
 > 生成的 `[autoexec]` 段完成；`mountFolder` / `unmountFolder` 只是重写 config 并

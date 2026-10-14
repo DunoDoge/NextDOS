@@ -40,13 +40,15 @@
 | `host_stop()` | 请求干净关闭（等价 guest 执行 `exit`）并 join 线程；未运行时安全 |
 | `host_restart()` | 用同一 config 做 `stop + start` 全量重启 |
 | `host_pause()` / `host_resume()` | 走引擎 pause 状态机（音频淡出 + CPU 停靠） |
-| `host_is_running()` / `host_is_paused()` | 状态查询；`is_paused` 隐含「运行中且已暂停」 |
+| `host_is_paused()` | 状态查询；隐含「运行中且已暂停」（音频层据它决定暂停时填静音） |
 
 ### 视频类
 
 | 函数 | 语义 |
 | --- | --- |
 | `video_get_frame(dst, cap, &w, &h, &seq)` | 拷贝最近一帧（BGRA / XRGB8888）到 `dst`；从未发布过则返回 false |
+| `video_get_frame_info(&w, &h, &seq)` | 只取最近一帧的尺寸与序号、不拷像素；NAPI 层据此给复用 `ArrayBuffer` 定容 |
+| `video_get_frame_seq()` | 最近一帧序号（0 = 尚无帧），relaxed 原子读，帧循环零拷贝轮询 |
 | `video_set_canvas_size(w, h)` | 设置宿主画布像素尺寸，随后触发一次 draw rect 重算（内部调用 `ohos_notify_canvas_changed()`） |
 
 ### 输入类
@@ -183,7 +185,9 @@ int  g_arg_conf; char g_arg_conf_value[1024]; char g_arg_program[64];
 
 | 静态成员 | 含义 |
 | --- | --- |
-| `snapshot_mutex_` + `snapshot_` / `snapshot_width_` / `snapshot_height_` / `snapshot_seq_` | 已发布帧的快照与序号 |
+| `published_`（`shared_ptr<const FrameData>`）+ `published_mutex_` | 当前已发布帧（不可变 `pixels/w/h/seq`）；互斥锁只在换指针时持有 |
+| `frame_pool_` + `pool_mutex_`（`FramePoolMax=4`） | 退役帧缓冲回收池：`shared_ptr` 计数归零时经 `recycle_frame` 停靠回池，发布端 `acquire_frame` 独占取出——稳态发布零分配，超上限真释放 |
+| `snapshot_seq_`（`std::atomic<uint32_t>`） | 已发布序号的镜像，供 `GetFrameSeq()` 无锁轮询（relaxed：数据路径走 `published_`，从不读它） |
 | `host_canvas_width_` / `host_canvas_height_`（`std::atomic<int>`） | 宿主画布尺寸；写自 NAPI 线程（`SetHostCanvasSize`），读自引擎线程视口热路径，故意**不走互斥锁**——被撕裂的 w/h 无害，后续画布变化事件会重算 |
 
 ### 帧生命周期
@@ -194,15 +198,23 @@ int  g_arg_conf; char g_arg_conf_value[1024]; char g_arg_program[64];
       GFX_EndUpdate  -> EndFrame()                    // frame_pending_ = true
       GFX_MaybePresentFrame -> PrepareFrame()         // frame_pending_ 则 PublishFrame()
                              + PresentFrame()          // no-op
-PublishFrame(): 逐行把 render_buffer_ 拷进 snapshot_，并用 0xFF000000 强制不透明
-              （文本模式背景像素 alpha=0，否则 ArkTS Canvas drawImage 会透出黑底）
+PublishFrame(): acquire_frame 取池中独占缓冲，逐行拷入并 0xFF000000 强制不透明
+              （文本模式背景像素 alpha=0，否则 ArkTS Canvas drawImage 会透出黑底），
+              再持 published_mutex_ 仅完成指针交换；退役帧等最后一个消费者引用
+              释放后自动回池
 ```
+
+发布与消费永不跨整帧拷贝共持一把锁：发布端只填池中**无消费者引用**的缓冲，
+消费端（NAPI 线程）持锁仅复制 `shared_ptr`，memcpy 在锁外对着引擎碰不到的
+不可变缓冲进行。
 
 ### 供 NAPI 调用的静态接口
 
 | 方法 | 语义 |
 | --- | --- |
-| `GetFrameSnapshot(dst, cap, &w, &h, &seq)` | 上锁拷贝快照；无帧或 `cap` 不足返回 false |
+| `GetFrameSnapshot(dst, cap, &w, &h, &seq)` | 取 `published_` 引用后**锁外**拷贝；无帧或 `cap` 不足返回 false |
+| `GetFrameInfo(&w, &h, &seq)` | 只读尺寸与序号，不拷像素 |
+| `GetFrameSeq()` | relaxed 原子读 `snapshot_seq_`，零拷贝轮询 |
 | `SetHostCanvasSize(w, h)` | 原子写入画布尺寸（>0 才生效） |
 
 其余 `RenderBackend` 接口：`SetShader` 恒返回 `Ok`（无 shader 管线），
@@ -283,9 +295,17 @@ down/up 事件**。
 - `ohos_init_resource_manager(mgr)`：保存 JS 侧传入的 `NativeResourceManager`。
 - `ohos_deploy_resources(files_dir)`：
   1. 无 manager 直接返回 false；
-  2. 若 `<files_dir>/resources/mapping` 已存在则视为已部署，直接返回 true（文件是静态的）；
-  3. 否则遍历子目录列表逐个 `deploy_raw_dir()`，最后以 `resources/mapping` 是否存在作为
-     成功判据。
+  2. 对 rawfile 树做指纹（子目录名 + 文件名 + 文件大小，FNV-1a 64，**不读文件内容**——
+     读内容就花了它想省的那次拷贝），与 `<files_dir>/.resources.stamp` 里上次完整部署
+     的指纹比对：一致且 `resources/mapping` 存在则跳过重部署；
+  3. 不一致（或无 stamp——预 stamp 安装与部署中途崩溃都是这个样子）则
+     `remove_tree()` 清掉旧树后逐子目录 `deploy_raw_dir()`；**stamp 只在完整部署后写入**，
+     所以残缺树永远不会被误判为最新；
+  4. 以 `resources/mapping` 是否存在作为成功判据。
+
+HAP 升级改变 rawfile 内容 → 指纹变化 → 自动重铺资源树；`backup_config.json` 的
+`excludes` 同时把 `files/cdrom/` 与 `files/resources/` 排除出备份（前者是暂存镜像，
+后者可随时重铺，都不值得进备份体积）。
 
 部署的子目录：
 
@@ -301,6 +321,8 @@ resources/mapping-unicode.org  resources/shader-presets  resources/shaders
 - `deploy_raw_dir()`：`OH_ResourceManager_OpenRawDir` 列条目，逐个开文件，
   64KB 缓冲读满并写 `<files_dir>/<raw_subdir>/<name>`；rawfile 为**扁平树**，
   子目录在打包时已用 `_` 拍平进条目名，此处镜像该命名。
+- `remove_tree()`：递归尽力删除目录树；stamp 只在完整部署后写入，崩溃残缺的树
+  交给下次启动的指纹比对清掉。
 
 ---
 
@@ -309,7 +331,8 @@ resources/mapping-unicode.org  resources/shader-presets  resources/shaders
 | 状态 | 写者 | 读者 | 同步方式 |
 | --- | --- | --- | --- |
 | `g_running` / `g_shutdown_done` | NAPI 线程 / 引擎线程 | 双方 | `std::atomic` |
-| `OhosRenderBackend::snapshot_*` | 引擎线程（`PublishFrame`） | NAPI 线程（`GetFrameSnapshot`） | `snapshot_mutex_` |
+| `OhosRenderBackend::published_` / `frame_pool_` | 引擎线程（`PublishFrame`） | NAPI 线程（`GetFrameSnapshot/GetFrameInfo`） | `published_mutex_`（仅指针交换）+ `pool_mutex_`（回池/取池）；像素读写均在锁外、对无引用缓冲 |
+| `OhosRenderBackend::snapshot_seq_` | 引擎线程 | NAPI 线程（`GetFrameSeq`） | `std::atomic<uint32_t>` relaxed |
 | `host_canvas_width_/height_` | NAPI 线程 | 引擎线程（视口热路径） | `std::atomic<int>`（撕裂无害） |
 | `g_mouse_layout` / `g_last_mouse_x/y` | 引擎线程 | NAPI 线程 | `g_mouse_mutex` |
 | `sdl.canvas_event_id` | 引擎线程 | NAPI 线程 | `std::atomic<uint32_t>`（0=哨兵） |
