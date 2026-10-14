@@ -154,16 +154,20 @@ entry/src/main/
   it is up, and default hit testing consumes every touch on the strip so taps between keys never reach the DOS mouse.
   Docked (split): an opaque half-window deck mounted as a LATER SIBLING of the Stack inside the one content Flex —
   the canvas genuinely shrinks and the engine refits the draw rect through the same `setCanvasSize` path the soft
-  keyboard's RESIZE avoid mode exercises; the split direction follows the window aspect — portrait stacks canvas
-  above deck (50/50), landscape puts canvas left and deck right (halving a ~360 vp-tall landscape window
-  horizontally starves both halves). The direction is a Flex ATTRIBUTE, never an if/else branch pair: a direction
-  branch swap destroys and rebuilds the whole subtree, remounting `EmulatorScreen` mid-rotation — its teardown
+  keyboard's RESIZE avoid mode exercises; the split direction follows the window HEIGHT — any window >= 550 vp tall
+  (`KB_BOTTOM_SPLIT_MIN_WIN_H`: every tablet both ways, portrait phones) stacks canvas above a bottom-half deck,
+  which keeps the deck's natural wide-short shape; only short landscape phones (~360 vp tall) go side-by-side
+  (canvas left, deck right — halving such a window horizontally starves both halves). Docked row heights scale to
+  the deck with a 2x cap (`KB_ROW_SCALE_MAX` in KeyboardPanel): past the cap the deck content centers vertically,
+  so tall decks breathe instead of stretching keys into vertical bars. The direction is a Flex ATTRIBUTE, never an
+  if/else branch pair: a branch swap destroys and rebuilds the whole subtree, remounting `EmulatorScreen`
+  mid-rotation — its teardown
   (`stopFrameLoop`) races the new instance's `startFrameLoop` on the shared `emu` interval, leaving the picture
   frozen while input keeps flowing (the docked-rotation freeze bug). Attribute updates relayout in place and never
   remount children.
   Below `KB_COMPACT_WIN_MAX_VP` (500 vp) the docked DECK re-flows into a 9-row, max-11-column compact layout — the
-  trigger is the DECK width (half the window in the landscape split), not the window width; every key stays visible,
-  no symbol plane; only the duplicate right Shift drops (identical keycode). The `ControlKeyBar` keys are
+  trigger is the DECK width (half the window only in the side-by-side split), not the window width; every key stays
+  visible, no symbol plane; only the duplicate right Shift drops (identical keycode). The `ControlKeyBar` keys are
   width-adaptive (30..48 vp from the bar's own measured width) so the bar never overflows a narrow window. In either mode `imeLayer` and `controlOverlay` are unmounted while
   it is up (the panel owns the
   bottom edge and carries its own hide button), and its sticky modifiers are released in `aboutToDisappear` or the
@@ -231,7 +235,7 @@ entry/src/main/
   left of the system three-button rect, phone/tablet get `ControlKeyBar` and immersive full screen. Orientation follows
   the system (portrait is allowed; the docked keyboard mode is the portrait story) and the settings sheet clamps its
   520 vp card to the window width (`Index.winWidthVp`) — on windows below 600 vp CENTER degrades to the bottom style.
-  `winWidthVp`/`winLandscape` refresh on `windowSizeChange`; `avoidAreaChange` does NOT fire on phone rotation
+  `winWidthVp`/`winHeightVp` refresh on `windowSizeChange`; `avoidAreaChange` does NOT fire on phone rotation
   (measured on device — a stale portrait width in the landscape sheet was exactly that bug).
   Rotation is declared in module.json5 as `orientation: auto_rotation_restricted` (sensor-following, gated by the
   control-center rotation switch): with the field absent a phone window stays in its launch orientation and never
