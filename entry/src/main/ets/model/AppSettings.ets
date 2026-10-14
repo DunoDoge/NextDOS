@@ -59,6 +59,12 @@ export class AppSettings {
    * stays down and text goes through the in-app KeyboardPanel instead.
    * Pure UI behavior, applied the moment it is set (no engine involvement). */
   static blockSoftKeyboard: boolean = false;
+  /** Open the in-app KeyboardPanel docked (split view: the panel owns the
+   * bottom half of the window and the canvas refits to the top half) instead
+   * of floating translucently over the full canvas. Persisted choice; takes
+   * effect on the next panel open or mode toggle, no engine involvement
+   * beyond the canvas-size refit the resize itself triggers. */
+  static keyboardDocked: boolean = false;
   /** Last folder successfully mounted as C: ('' = none). */
   static lastMountDir: string = '';
   /** Picker URI of lastMountDir whose persisted grant covers it ('' = none /
@@ -137,6 +143,10 @@ export class AppSettings {
       const blockIme: preferences.ValueType = store.getSync('blockSoftKeyboard', AppSettings.blockSoftKeyboard);
       if (typeof blockIme === 'boolean') {
         AppSettings.blockSoftKeyboard = blockIme;
+      }
+      const kbDocked: preferences.ValueType = store.getSync('keyboardDocked', AppSettings.keyboardDocked);
+      if (typeof kbDocked === 'boolean') {
+        AppSettings.keyboardDocked = kbDocked;
       }
       const lastDir: preferences.ValueType = store.getSync('lastMountDir', AppSettings.lastMountDir);
       if (typeof lastDir === 'string') {
@@ -219,6 +229,12 @@ export class AppSettings {
     AppSettings.blockSoftKeyboard = value;
     AppStorage.setOrCreate('settings.blockSoftKeyboard', value);
     AppSettings.persist('blockSoftKeyboard', value);
+  }
+
+  static setKeyboardDocked(value: boolean): void {
+    AppSettings.keyboardDocked = value;
+    AppStorage.setOrCreate('settings.keyboardDocked', value);
+    AppSettings.persist('keyboardDocked', value);
   }
 
   static setLastMountDir(value: string): void {
@@ -432,6 +448,7 @@ export class AppSettings {
     AppStorage.setOrCreate('settings.mute', AppSettings.mute);
     AppStorage.setOrCreate('settings.autoMount', AppSettings.autoMount);
     AppStorage.setOrCreate('settings.blockSoftKeyboard', AppSettings.blockSoftKeyboard);
+    AppStorage.setOrCreate('settings.keyboardDocked', AppSettings.keyboardDocked);
     AppStorage.setOrCreate('settings.lastMountDir', AppSettings.lastMountDir);
     AppStorage.setOrCreate('settings.lastMountUri', AppSettings.lastMountUri);
     AppStorage.setOrCreate('settings.recentMounts', AppSettings.recentMounts);
