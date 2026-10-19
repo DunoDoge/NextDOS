@@ -240,17 +240,29 @@ endif()
 # Enable color output for certain compilers
 set(CMAKE_COLOR_DIAGNOSTICS ON)
 
-find_package(Git)
+# NextDOS local patch: the vendored tree has no .git of its own and the OHOS
+# native build may expose no `git` on PATH, which left the banner's commit
+# suffix at "?". Honour a hash supplied by the parent project (resolved from
+# the app checkout's git metadata) and only probe git when it is absent.
+if (NOT DEFINED BUILD_GIT_HASH OR BUILD_GIT_HASH STREQUAL "")
+  find_package(Git)
+  if (Git_FOUND)
+    execute_process(
+      COMMAND ${GIT_EXECUTABLE} rev-parse --short=5 HEAD
+      WORKING_DIRECTORY         ${CMAKE_CURRENT_LIST_DIR}
+      OUTPUT_VARIABLE           BUILD_GIT_HASH
+      OUTPUT_STRIP_TRAILING_WHITESPACE
+      RESULT_VARIABLE           BUILD_GIT_HASH_RESULT
+      ERROR_QUIET
+    )
+    if (NOT BUILD_GIT_HASH_RESULT EQUAL 0)
+      set(BUILD_GIT_HASH "")
+    endif()
+  endif()
+endif()
 
-if (Git_FOUND)
-  execute_process(
-    COMMAND ${GIT_EXECUTABLE} rev-parse --short=5 HEAD
-    WORKING_DIRECTORY         ${CMAKE_CURRENT_LIST_DIR}
-    OUTPUT_VARIABLE           BUILD_GIT_HASH
-    OUTPUT_STRIP_TRAILING_WHITESPACE
-  )
-else()
-  set(BUILD_GIT_HASH "?")
+if (BUILD_GIT_HASH STREQUAL "")
+  set(BUILD_GIT_HASH "unknown")
 endif()
 
 check_include_file("unistd.h" HAS_UNISTD)

@@ -2,10 +2,11 @@
 
 ## Provenance status (local-only patches)
 
-Two patches exist ONLY in this vendored tree and are NOT commits on the
+Three patches exist ONLY in this vendored tree and are NOT commits on the
 fork's `ohos` branch (details in the entries below): the UTF-8 autoexec
-passthrough patch and the empty-cue-parse guard. Every other deviation
-listed here is tagged with its branch commit. Upstreaming these two to
+passthrough patch, the empty-cue-parse guard and the build-hash fallback in
+the root `CMakeLists.txt`. Every other deviation listed here is tagged with
+its branch commit. Upstreaming these to
 <https://github.com/DunoDoge/dosbox-staging> is an open task; until then,
 updating the vendored tree from the branch tip re-applies them by hand.
 
@@ -18,9 +19,10 @@ updating the vendored tree from the branch tip re-applies them by hand.
   dated 2026-10-01, upstream base 2026-08-10). Top-level `docs/`,
   `tests/` and every `src/**/docs/` directory are stripped from the
   vendored tree, and root `CMakeLists.txt` differs from the tip by line
-  endings only; apart from that the tree is byte-identical to the tip,
-  and the patch entries below describe the branch's deviations from
-  upstream, each tagged with its commit.
+  endings and the build-hash fallback local patch (see below); apart from
+  that the tree is byte-identical to the tip, and the patch entries below
+  describe the branch's deviations from upstream, each tagged with its
+  commit.
 - The `ohos` branch carries the HarmonyOS port: OHOS platform branch in
   CMake (embed-mode source sets and link deps: `src/gui/CMakeLists.txt`
   drops `sdl_gui.cpp` but keeps the render pipeline and links `glad`
@@ -126,6 +128,14 @@ updating the vendored tree from the branch tip re-applies them by hand.
   the whole embed process; the guard makes `SetDevice` fall through to
   `LoadIsoFile`, which rejects the file gracefully. Needed because a guest
   `mount d <slot> -t iso` of an empty image killed the app on the spot.
+- Build-hash fallback patch (local patch in root `CMakeLists.txt`, not yet a
+  commit on the fork's `ohos` branch): the vendored tree carries no `.git` of
+  its own and the HarmonyOS native build does not always expose `git` on
+  `PATH`, so `find_package(Git)` failed and the startup banner printed
+  `DOSBox Staging <version> (?)`. The probe now honours a `BUILD_GIT_HASH`
+  supplied by the parent project — NextDOS reads the app checkout's commit
+  from its git metadata without invoking git — and falls back to `unknown`
+  instead of `?` for a source archive with no git metadata.
 - License: **GPL-2.0-or-later.** Linking DOSBox Staging into NextDOS makes
   the combined work subject to the GNU GPL v2 (or later). Distributing the
   application therefore requires shipping the corresponding source code of

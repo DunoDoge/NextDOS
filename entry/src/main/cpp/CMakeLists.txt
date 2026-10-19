@@ -69,6 +69,70 @@ set(OPT_MANYMOUSE  OFF CACHE BOOL "" FORCE)
 set(OPT_TESTS      OFF CACHE BOOL "" FORCE)
 set(OPT_DOCUMENTATION OFF CACHE BOOL "" FORCE)
 
+# ---------------------------------------------------------------------------
+# Build hash for the engine's startup banner
+#
+# The vendored engine has no .git of its own and the native build does not
+# always expose a `git` executable on PATH, so the engine's own probe below
+# used to end up with "?" and the welcome banner read "... (?)". Resolve the
+# app checkout's commit straight from the git metadata instead: HEAD names a
+# ref that is either a loose file or a line in packed-refs. Detached HEADs and
+# worktree .git files are handled; a source archive without .git leaves the
+# variable unset and the engine falls back to its `unknown` marker.
+# ---------------------------------------------------------------------------
+function(nextdos_resolve_git_hash out_var)
+    set(repo_root "${NATIVERENDER_ROOT_PATH}/../../../../")
+    set(git_entry "${repo_root}.git")
+    set(git_dir "${git_entry}")
+
+    if (EXISTS "${git_entry}" AND NOT IS_DIRECTORY "${git_entry}")
+        file(READ "${git_entry}" git_pointer)
+        string(REGEX MATCH "^gitdir: *([^\n\r]+)" _match "${git_pointer}")
+        if (NOT _match)
+            return()
+        endif()
+        set(git_dir "${CMAKE_MATCH_1}")
+        if (NOT IS_ABSOLUTE "${git_dir}")
+            set(git_dir "${repo_root}${git_dir}")
+        endif()
+    endif()
+
+    if (NOT IS_DIRECTORY "${git_dir}" OR NOT EXISTS "${git_dir}/HEAD")
+        return()
+    endif()
+
+    file(READ "${git_dir}/HEAD" head)
+    string(STRIP "${head}" head)
+    set(hash "")
+
+    if (head MATCHES "^ref: *(.+)$")
+        set(ref "${CMAKE_MATCH_1}")
+        if (EXISTS "${git_dir}/${ref}")
+            file(READ "${git_dir}/${ref}" hash)
+            string(STRIP "${hash}" hash)
+        elseif (EXISTS "${git_dir}/packed-refs")
+            file(READ "${git_dir}/packed-refs" packed_refs)
+            string(REGEX MATCH "[0-9a-f]+ ${ref}([\n\r]|$)" packed_line
+                   "${packed_refs}")
+            if (packed_line)
+                string(REGEX MATCH "^[0-9a-f]+" hash "${packed_line}")
+            endif()
+        endif()
+    elseif (head MATCHES "^[0-9a-f]+$")
+        set(hash "${head}")
+    endif()
+
+    if (hash MATCHES "^[0-9a-f]+$")
+        string(SUBSTRING "${hash}" 0 5 short_hash)
+        set(${out_var} "${short_hash}" PARENT_SCOPE)
+    endif()
+endfunction()
+
+nextdos_resolve_git_hash(NEXTDOS_GIT_HASH)
+if (NEXTDOS_GIT_HASH)
+    set(BUILD_GIT_HASH "${NEXTDOS_GIT_HASH}")
+endif()
+
 add_subdirectory(${TP_DIR}/dosbox-staging dosbox-staging)
 
 # ---------------------------------------------------------------------------
