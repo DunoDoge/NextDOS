@@ -148,23 +148,28 @@ entry/src/main/
   dedups same-stroke echoes (80 ms window); content deletions are single-report and need no dedup.
   In-app keyboard: `KeyboardPanel` (full PC layout, sticky Shift/Ctrl/Alt, hold-to-repeat)
   has two modes toggled from its nav row and persisted as `settings.keyboardDocked`. Floating (default): translucent
-  strip as the LAST child of Index's Stack — the canvas keeps its full size, no `setCanvasSize` refit happens while
-  it is up, and default hit testing consumes every touch on the strip so taps between keys never reach the DOS mouse.
+  strip as the LAST child of Index's Stack, sized to the docked bottom-half deck's box (half the content height, natural
+  row height as the floor) and scaled by the same row formula, so a horizontally split window shows keys of the same
+  size in both modes; the canvas keeps its full size, no `setCanvasSize` refit happens while it is up, and default hit testing consumes every touch on the strip
+  so taps between keys never reach the DOS mouse.
   Docked (split): an opaque half-window deck mounted as a LATER SIBLING of the Stack inside the one content Flex —
   the canvas genuinely shrinks and the engine refits the draw rect through the same `setCanvasSize` path the soft
   keyboard's RESIZE avoid mode exercises; the split direction follows the window HEIGHT — any window >= 550 vp tall
   (`KB_BOTTOM_SPLIT_MIN_WIN_H`: every tablet both ways, portrait phones) stacks canvas above a bottom-half deck,
   which keeps the deck's natural wide-short shape; only short landscape phones (~360 vp tall) go side-by-side
-  (canvas left, deck right — halving such a window horizontally starves both halves). Docked row heights scale to
-  the deck with a 2x cap (`KB_ROW_SCALE_MAX` in KeyboardPanel): past the cap the deck content centers vertically,
-  so tall decks breathe instead of stretching keys into vertical bars. The direction is a Flex ATTRIBUTE, never an
+  (canvas left, deck right — halving such a window horizontally starves both halves). Row heights scale to the panel
+  with a 2x cap (`KB_ROW_SCALE_MAX` in KeyboardPanel) in both modes: past the cap the content centers vertically,
+  so tall panels breathe instead of stretching keys into vertical bars. A mode swap remounts the panel without a
+  measured height, so the parent also passes the expected content height (`targetH`); without that the incoming
+  panel paints one frame at natural row heights (a visible height jump on every toggle). The direction is a Flex ATTRIBUTE, never an
   if/else branch pair: a branch swap destroys and rebuilds the whole subtree, remounting `EmulatorScreen`
   mid-rotation — its teardown
   (`stopFrameLoop`) races the new instance's `startFrameLoop` on the shared `emu` interval, leaving the picture
   frozen while input keeps flowing (the docked-rotation freeze bug). Attribute updates relayout in place and never
   remount children.
-  Below `KB_COMPACT_WIN_MAX_VP` (500 vp) the docked DECK re-flows into a 9-row, max-11-column compact layout — the
-  trigger is the DECK width (half the window only in the side-by-side split), not the window width; every key stays
+  Below `KB_COMPACT_WIN_MAX_VP` (500 vp) the panel re-flows into a 9-row, max-11-column compact layout — the
+  trigger is the DECK width (half the window only in the side-by-side split; floating spans the window, so there it
+  is the window width); every key stays
   visible, no symbol plane; only the duplicate right Shift drops (identical keycode). The `ControlKeyBar` keys are
   width-adaptive (30..48 vp from the bar's own measured width) so the bar never overflows a narrow window. In either mode `imeLayer` and `controlOverlay` are unmounted while
   it is up (the panel owns the

@@ -14,11 +14,28 @@ enum KbSticky {
  * 14-column rows still make usable keys. */
 export const KB_COMPACT_WIN_MAX_VP: number = 500;
 
-/** Cap on the docked row-height stretch factor. A tall deck (portrait
- * tablet, landscape bottom half) would otherwise stretch rows into
- * vertical bars — past the cap the leftover height centers the deck
- * content instead, keeping key proportions keyboard-like. */
+/** Cap on the row-height stretch factor. A tall panel (portrait tablet,
+ * landscape bottom half) would otherwise stretch rows into vertical bars —
+ * past the cap the leftover height centers the panel content instead,
+ * keeping key proportions keyboard-like. */
 const KB_ROW_SCALE_MAX: number = 2.0;
+
+/** Base-height sums of all rendered rows (chrome nav row included), full and
+ * compact layouts, used to turn the measured panel height into a row scale. */
+const KB_BASE_SUM_FULL: number = 218;
+const KB_BASE_SUM_COMPACT: number = 270;
+
+/** Panel top padding plus the inter-row gaps (full: 6 gaps, compact: 8). */
+const KB_PANEL_TOP_PAD: number = 6;
+const KB_ROW_GAP_VP: number = 3;
+
+/** Natural (unscaled) panel heights: the height the rows need at scale 1.
+ * The floating mode's parent uses these as a floor so a short window never
+ * squeezes its rows below the base size. */
+export const KB_NATURAL_H_FULL: number =
+  KB_BASE_SUM_FULL + KB_PANEL_TOP_PAD + 6 * KB_ROW_GAP_VP;
+export const KB_NATURAL_H_COMPACT: number =
+  KB_BASE_SUM_COMPACT + KB_PANEL_TOP_PAD + 8 * KB_ROW_GAP_VP;
 
 /** One virtual key: HarmonyOS keycode plus its layout data. */
 export class KbKey {
@@ -39,25 +56,32 @@ export class KbKey {
  * nav row (persisted as settings.keyboardDocked by the parent):
  *
  * - Floating (default): translucent strip over the bottom of the DOS screen
- *   (the last child of Index's Stack, above the canvas). The whole panel is
- *   see-through — strip and key caps alike — so the emulated picture stays
- *   readable underneath; the canvas keeps its full size, no setCanvasSize
- *   refit happens while typing.
+ *   (the last child of Index's Stack, above the canvas). Its box matches the
+ *   docked bottom-half deck on the same window (half the content height, see
+ *   Index), so a window that docks canvas above keyboard presents keys of
+ *   the same size in both modes; only the strip stays see-through. The
+ *   canvas keeps its full size — no setCanvasSize refit happens while
+ *   typing.
  * - Docked (split view): opaque deck filling the bottom half of the window
  *   (or its right half on short landscape phones, see Index) as a sibling
  *   BELOW/BESIDE the canvas stack. The canvas genuinely shrinks and the
  *   engine refits its draw rect through the same setCanvasSize path the
- *   soft keyboard's RESIZE avoid mode exercises; rows scale to the deck
- *   height with a 2x cap (KB_ROW_SCALE_MAX) — a taller deck centers its
- *   content instead of stretching keys into vertical bars.
- * - Compact (docked + narrow window): under KB_COMPACT_WIN_MAX_VP the full
- *   PC layout re-flows into 9 rows of at most 11 columns, because a phone
- *   portrait deck is tall and narrow — columns trade for rows. F row splits
- *   in two (Esc+F1..F6 / F7..F12+BkSp), the number row keeps ` and 1..0
- *   while - = move to the punctuation row, punctuation shares a row with
- *   the arrows, and the duplicate right Shift collapses into the left one
- *   (identical keycode, no functional loss). Every key stays visible — no
- *   symbol plane to switch to, DOS path/switch characters stay one tap.
+ *   soft keyboard's RESIZE avoid mode exercises.
+ *
+ * Rows scale to the panel's measured height with a 2x cap
+ * (KB_ROW_SCALE_MAX) in both modes — a taller panel centers its content
+ * instead of stretching keys into vertical bars.
+ *
+ * - Compact (narrow panel): under KB_COMPACT_WIN_MAX_VP the full PC layout
+ *   re-flows into 9 rows of at most 11 columns, because a phone portrait
+ *   panel is tall and narrow — columns trade for rows. Floating spans the
+ *   full window, so it judges the window width exactly like the docked
+ *   bottom-half deck does. F row splits in two (Esc+F1..F6 / F7..F12+BkSp),
+ *   the number row keeps ` and 1..0 while - = move to the punctuation row,
+ *   punctuation shares a row with the arrows, and the duplicate right Shift
+ *   collapses into the left one (identical keycode, no functional loss).
+ *   Every key stays visible — no symbol plane to switch to, DOS
+ *   path/switch characters stay one tap.
  *
  * Both modes share the rest of the contract. Default hit testing consumes
  * every touch on the strip, so taps between keys never reach the DOS mouse.
@@ -89,7 +113,11 @@ export struct KeyboardPanel {
   // Fixed per mount: the parent renders one branch per mode, so a plain
   // member (not @Prop) is enough and avoids a re-render dependency.
   docked: boolean = false;
-  // Compact layout for narrow decks (see struct doc). @Prop so a panel that
+  // Floating-mode panel that fills the same box as the docked bottom-half
+  // deck (see Index): rows scale to the measured height, only the surface
+  // differs.
+  fill: boolean = false;
+  // Compact layout for narrow panels (see struct doc). @Prop so a panel that
   // stays mounted across a rotation swaps layouts with the window width.
   @Prop compact: boolean = false;
   @State shiftOn: boolean = false;
@@ -97,8 +125,14 @@ export struct KeyboardPanel {
   @State altOn: boolean = false;
   @State capsOn: boolean = false;
   @State pressedId: string = '';
-  // Measured deck height (vp): the docked row scale derives from it. 0
-  // until the first layout pass; rowH falls back to base heights then.
+  // Expected panel content height (vp) from the parent's layout, used until
+  // the first onAreaChange reports the measured height. Without it a freshly
+  // mounted panel renders one frame at natural row heights inside its box,
+  // which reads as a height jump when toggling floating <-> docked (the
+  // incoming panel mounts before it has measured itself).
+  targetH: number = 0;
+  // Measured panel content height (vp): the row scale derives from it. 0
+  // until the first layout pass; targetH covers that first frame.
   @State deckH: number = 0;
   private navRow: KbKey[] = [];
   private fnRow: KbKey[] = [];
@@ -107,7 +141,7 @@ export struct KeyboardPanel {
   private row3: KbKey[] = [];
   private row4: KbKey[] = [];
   private row5: KbKey[] = [];
-  // Compact-layout rows (built only when compact, see buildCompactRows).
+  // Compact-layout rows (built unconditionally, see buildCompactRows).
   private cFn1: KbKey[] = [];
   private cFn2: KbKey[] = [];
   private cNum: KbKey[] = [];
@@ -211,14 +245,15 @@ export struct KeyboardPanel {
       this.mk('down', '↓', '', KeyCode.KEYCODE_DPAD_DOWN, 1),
       this.mk('right', '→', '', KeyCode.KEYCODE_DPAD_RIGHT, 1)
     ];
-    if (this.compact) {
-      this.buildCompactRows();
-    }
+    // Built unconditionally: @Prop compact can flip on rotation while the
+    // panel stays mounted (docked and floating alike), and an empty row set
+    // would then render as blank rows.
+    this.buildCompactRows();
   }
 
   /**
-   * Narrow-deck layout: every row capped at 11 columns so keys stay >=29vp
-   * on a ~360vp phone portrait deck (the full layout's 14-column rows leave
+   * Narrow-panel layout: every row capped at 11 columns so keys stay >=29vp
+   * on a ~360vp phone portrait panel (the full layout's 14-column rows leave
    * ~20vp keys there — below any usable touch size). Same keys, same ids as
    * the full layout wherever the key survives, so isLit/pressKey/sticky and
    * repeat logic work unchanged; only the right Shift is dropped because it
@@ -441,12 +476,12 @@ export struct KeyboardPanel {
     Column() {
       if (!key.small && key.sub !== '') {
         Text(key.sub)
-          .fontSize(this.docked ? 10 : 8)
+          .fontSize(10)
           .fontColor('#8A8A92')
-          .height(this.docked ? 11 : 9)
+          .height(11)
       }
       Text(key.label)
-        .fontSize(key.small ? (this.docked ? 12 : 10) : (this.docked ? 16 : 13))
+        .fontSize(key.small ? 12 : 16)
         .fontColor(this.isLit(key) ? '#FFD34D' : '#E6E6E6')
     }
     .justifyContent(FlexAlign.Center)
@@ -455,8 +490,9 @@ export struct KeyboardPanel {
     .borderRadius(5)
     // Translucent cap in floating mode so the DOS picture stays readable
     // beneath the strip; opaque cap on the docked deck (Bluetooth-keyboard
-    // look — nothing shows through from behind).
-    .backgroundColor(this.docked ? '#33333B' : '#8033333B')
+    // look — nothing shows through from behind). 30% alpha keeps the DOS
+    // picture readable through both the strip and the caps.
+    .backgroundColor(this.docked ? '#33333B' : '#4D33333B')
     .opacity(this.pressedId === key.id ? 0.4 : 1)
     .onTouch((event: TouchEvent) => {
       if (event.type === TouchType.Down) {
@@ -488,29 +524,22 @@ export struct KeyboardPanel {
     return this.compact ? 3 : (this.docked ? 4 : 3);
   }
 
-  // Base-height sums of all rendered rows (chrome nav row included), full
-  // and compact layouts, used to turn the measured deck height into a row
-  // scale.
-  private static readonly BASE_SUM_FULL: number = 218;
-  private static readonly BASE_SUM_COMPACT: number = 270;
-
   /**
-   * Rendered height of one row. Floating keeps the fixed base height; the
-   * docked deck scales every base by (deck content height / base sum),
-   * capped at KB_ROW_SCALE_MAX. Uncapped, the scaled heights fill the deck
-   * exactly; capped (tall decks), the sum falls short and the centered
-   * column (see build) turns the leftover into deck breathing room instead
-   * of stretching keys into vertical bars.
+   * Rendered height of one row. A filled panel (docked deck or the floating
+   * strip, which now mirrors its box) scales every base by (measured content
+   * height / base sum), capped at KB_ROW_SCALE_MAX. Uncapped, the scaled
+   * heights fill the panel exactly; capped (tall panels), the sum falls
+   * short and the centered column (see build) turns the leftover into
+   * breathing room instead of stretching keys into vertical bars.
    */
   private rowH(base: number): number {
-    if (!this.docked || this.deckH <= 0) {
+    const contentH: number = this.deckH > 0 ? this.deckH : this.targetH;
+    if (!(this.docked || this.fill) || contentH <= 0) {
       return base;
     }
     const gaps: number = (this.compact ? 8 : 6) * this.rowGapVp();
-    const available: number = this.deckH - 6 - gaps;
-    const sum: number = this.compact
-      ? KeyboardPanel.BASE_SUM_COMPACT
-      : KeyboardPanel.BASE_SUM_FULL;
+    const available: number = contentH - KB_PANEL_TOP_PAD - gaps;
+    const sum: number = this.compact ? KB_BASE_SUM_COMPACT : KB_BASE_SUM_FULL;
     const scale: number = Math.min(available / sum, KB_ROW_SCALE_MAX);
     return Math.round(base * Math.max(scale, 0.5));
   }
@@ -529,14 +558,14 @@ export struct KeyboardPanel {
         }, (key: KbKey) => key.id)
         Column() {
           Text(this.docked ? '悬浮' : '分屏')
-            .fontSize(this.docked ? 12 : 10)
+            .fontSize(12)
             .fontColor('#E6E6E6')
         }
         .justifyContent(FlexAlign.Center)
         .layoutWeight(1.3)
         .height('100%')
         .borderRadius(5)
-        .backgroundColor(this.docked ? '#33333B' : '#8033333B')
+        .backgroundColor(this.docked ? '#33333B' : '#4D33333B')
         // Touch-only chrome: out of Tab traversal so a hardware keyboard
         // never parks focus here and swallows guest keys.
         .tabIndex(-1)
@@ -552,7 +581,7 @@ export struct KeyboardPanel {
         .layoutWeight(1.3)
         .height('100%')
         .borderRadius(5)
-        .backgroundColor(this.docked ? '#33333B' : '#8033333B')
+        .backgroundColor(this.docked ? '#33333B' : '#4D33333B')
         // Touch-only chrome: out of Tab traversal so a hardware keyboard
         // never parks focus here and swallows guest keys.
         .tabIndex(-1)
@@ -582,15 +611,15 @@ export struct KeyboardPanel {
       }
     }
     .width('100%')
-    // Floating keeps content height (auto) inside the bottom-anchored Stack;
-    // docked fills the box its parent reserves. Centered so a capped row
-    // sum (KB_ROW_SCALE_MAX) leaves breathing room top and bottom instead
-    // of piling it at the bottom edge.
-    .height(this.docked ? '100%' : 'auto')
-    .justifyContent(this.docked ? FlexAlign.Center : FlexAlign.Start)
+    // A filled panel (docked deck, or the floating strip sized by Index)
+    // takes the box its parent reserves; centered so a capped row sum
+    // (KB_ROW_SCALE_MAX) leaves breathing room top and bottom instead of
+    // piling it at the bottom edge.
+    .height(this.docked || this.fill ? '100%' : 'auto')
+    .justifyContent(this.docked || this.fill ? FlexAlign.Center : FlexAlign.Start)
     .onAreaChange((_oldArea: Area, newArea: Area): void => {
       this.deckH = Number(newArea.height);
     })
-    .padding({ left: 6, right: 6, top: 6 })
+    .padding({ left: 6, right: 6, top: KB_PANEL_TOP_PAD })
   }
 }

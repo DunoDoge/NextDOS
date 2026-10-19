@@ -11,7 +11,8 @@ import { AppSettings } from '../model/AppSettings';
 import { MountFolder, MountRecord } from '../model/MountFolder';
 import { EmulatorScreen } from '../view/EmulatorScreen';
 import { ControlKeyBar, controlCornerButton } from '../view/ControlKeyBar';
-import { KeyboardPanel, KB_COMPACT_WIN_MAX_VP } from '../view/KeyboardPanel';
+import { KeyboardPanel, KB_COMPACT_WIN_MAX_VP, KB_NATURAL_H_FULL,
+  KB_NATURAL_H_COMPACT } from '../view/KeyboardPanel';
 import { SettingsSheet } from '../view/SettingsSheet';
 
 const TAG: string = 'NextDOS';
@@ -1270,13 +1271,18 @@ struct Index {
         .height('100%')
         .padding({ top: 16, right: 16 })
         .hitTestBehavior(HitTestMode.None)
-        // Floating mode: 40% black strip over the panel's translucent
-        // caps (contract in KeyboardPanel): the picture stays readable
-        // beneath and default hit testing eats taps between keys. Bottom
-        // padding holds the gesture-indicator clearance.
+        // Floating mode: the same box as the docked bottom-half deck (half
+        // the content height) so both modes show keys of the same size, with
+        // a 20% black strip over the panel's 30% caps (contract in
+        // KeyboardPanel): the picture stays readable beneath and default
+        // hit testing eats taps between keys. Bottom padding holds the
+        // gesture-indicator clearance.
         if (this.keyboardVisible && !this.keyboardDocked) {
           KeyboardPanel({
             emu: this.emu,
+            fill: true,
+            compact: this.floatingCompact(),
+            targetH: this.floatingKeyboardHeightVp() - this.keyboardBottomPadVp(),
             onHide: () => {
               this.keyboardVisible = false;
             },
@@ -1284,8 +1290,10 @@ struct Index {
               this.toggleKeyboardMode();
             }
           })
-            .padding({ bottom: Math.max(this.navInsetVp, 28) })
-            .backgroundColor('#66000000')
+            .width('100%')
+            .height(this.floatingKeyboardHeightVp())
+            .padding({ bottom: this.keyboardBottomPadVp() })
+            .backgroundColor('#33000000')
         }
       }
     }
@@ -1303,6 +1311,7 @@ struct Index {
       emu: this.emu,
       docked: true,
       compact: this.dockedDeckCompact(),
+      targetH: this.dockedDeckContentH(),
       onHide: () => {
         this.keyboardVisible = false;
       },
@@ -1310,7 +1319,7 @@ struct Index {
         this.toggleKeyboardMode();
       }
     })
-      .padding({ bottom: Math.max(this.navInsetVp, 28) })
+      .padding({ bottom: this.keyboardBottomPadVp() })
       .backgroundColor('#1A1A20')
   }
 
@@ -1337,6 +1346,42 @@ struct Index {
     }
     const deckW: number = this.dockedBottomSplit() ? this.winWidthVp : this.winWidthVp / 2;
     return deckW < KB_COMPACT_WIN_MAX_VP;
+  }
+
+  /**
+   * Floating keyboard box, aligned with the docked bottom-half deck on the
+   * same window: the bottom split reserves half the content height for the
+   * deck, so the floating strip does the same and the rows scale
+   * identically. The panel's natural (scale-1) height is the floor — on a
+   * short landscape window the half-window box would otherwise squeeze rows
+   * below their base size.
+   */
+  private floatingKeyboardHeightVp(): number {
+    const natural: number = this.floatingCompact()
+      ? KB_NATURAL_H_COMPACT
+      : KB_NATURAL_H_FULL;
+    // The box includes the gesture-indicator padding, so the floor must too.
+    return Math.max(this.winHeightVp / 2, natural + this.keyboardBottomPadVp());
+  }
+
+  /** Gesture-indicator clearance shared by both keyboard modes. */
+  private keyboardBottomPadVp(): number {
+    return Math.max(this.navInsetVp, 28);
+  }
+
+  /** Docked deck content height (its box minus the gesture padding): the
+   * value the incoming deck scales its rows against on the very first frame,
+   * before onAreaChange has measured it. */
+  private dockedDeckContentH(): number {
+    const box: number = this.dockedBottomSplit() ? this.winHeightVp / 2 : this.winHeightVp;
+    return box - this.keyboardBottomPadVp();
+  }
+
+  /** Floating spans the full window, so its compact trigger is the window
+   * width — the same deck width the docked bottom split sees on phones.
+   * False until the first window read, matching dockedDeckCompact. */
+  private floatingCompact(): boolean {
+    return this.winWidthVp > 0 && this.winWidthVp < KB_COMPACT_WIN_MAX_VP;
   }
 
   build() {
