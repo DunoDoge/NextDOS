@@ -95,6 +95,8 @@ UTF-8 autoexec passthrough 补丁保证重启后 `[autoexec]` 里的 UTF-8 路�
 | `mute` | `mute` | `[mixer] nosound`（启动期） |
 | `autoMount` | `autoMount` | 下次启动自动挂载上次目录 |
 | `blockSoftKeyboard` | `blockSoftKeyboard` | 禁用系统软键盘（纯 UI，立即生效） |
+| `gamepadHudOn` | `gamepadHudOn` | 显示自定义虚拟手柄 HUD（纯 UI，立即生效；2in1 不使用） |
+| `gamepadLayout` | `gamepadLayout` | 手柄布局编码串（`GamepadLayout.encode`，逐行记录；空 = 默认布局） |
 | `lastMountDir` / `lastMountUri` | 同名 | 上次挂载的 C: 目录与其 picker URI（URI 用于重启后重新激活授权） |
 | `recentMounts` | `recentMountDirs` + `recentMountUris` | 最近挂载记录 MRU（上限 `RECENT_MOUNT_MAX`=5），两条换行拼接的字符串平行存储 |
 | `lastCdImage` | `lastCdImage` | 上次暂存的 D: 槽位路径 |
@@ -115,6 +117,20 @@ UTF-8 autoexec passthrough 补丁保证重启后 `[autoexec]` 里的 UTF-8 路�
 | `CPU_OPTIONS` / `cpuHint` | CPU 速度预设（max/3000/8000/20000/50000）与提示语 |
 
 默认虚拟 NAT：`10.0.2.15 / 255.255.255.0 / 10.0.2.2 / 10.0.2.3`。
+
+### 2.1 `GamepadLayout`（[GamepadLayout.ets](../../entry/src/main/ets/model/GamepadLayout.ets)）
+
+虚拟手柄 HUD 的布局模型（纯数据，不依赖 UI）：
+
+- `GamepadWidget`：`kind`（`Button`/`Stick`）、`id`、`code`（HarmonyOS KeyCode）、`label`、
+  `sticky`、归一化中心 `cx/cy`、基准尺寸 `size`。
+- `defaultLayout()`：摇杆 (0.18, 0.62, 130) + Space/Enter/Ctrl(sticky)/Esc。
+- `presets()`：Ctrl/Alt/Shift（修饰）、Space/Enter/Esc/Tab/Home/End/PgUp/PgDn（功能）、
+  F1–F12（数字）、四个方向键；每个预设带 `GamepadGroup`，`presetsIn/groupOf/groupLabel`
+  供编辑面板分组显示。
+- `encode/decode`：每行 `btn|id|code|sticky|label|cx|cy|size` 或 `stick|id|cx|cy|size`；
+  浮点 3 位小数，非法行丢弃，空/全非法回退默认；载入时夹取坐标与尺寸。
+- 8 向摇杆没有独立映射表：方向键组合由 `GamepadOverlay.updateStick` 按扇区生成。
 
 ---
 

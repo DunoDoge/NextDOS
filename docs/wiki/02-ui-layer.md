@@ -60,6 +60,9 @@ UI 组件（`view/`）。
 | `keyboardVisible` | 应用内全键盘是否显示 |
 | `keyboardDocked` | `@StorageLink('settings.keyboardDocked')`，键盘分屏模式（驻底占半屏、画面 refit 到上半屏），经 `AppSettings.setKeyboardDocked` 写入以同步持久化 |
 | `blockSoftKeyboard` | `@StorageLink('settings.blockSoftKeyboard')`，禁用系统软键盘 |
+| `gamepadHudOn` | `@StorageLink('settings.gamepad.hudOn')`，显示自定义虚拟手柄 HUD（仅手机/平板） |
+| `gamepadEditing` | HUD 原位编辑态：设置面板「编辑虚拟按键」行关闭 sheet 后进入；编辑期间不注入 guest 按键，`imeLayer` 同时卸载（编辑中点画布空白不会唤起系统软键盘） |
+| `emuSession` | 引擎 restart 计数：每次 `emu.reset()` 后自增，通知 HUD 释放所有按住键 |
 | `imeBuffer` / `imeLastBuffer` | 不可见 IME 字段内容（受控，每次变更写回）与差分基准，二者恒相等；聚焦时播种零宽哨兵保证字段非空（见 `imeLayer`） |
 | `navInsetVp` | 导航手势条避让高度（vp） |
 | `winWidthVp` / `winHeightVp` | 窗口宽高（vp）：设置面板卡宽据此收窄，分屏键盘方向据此选择（窗口高 ≥550vp 上下分、更矮的横屏手机左右分）。均随 `windowSizeChange` 刷新（`avoidAreaChange` 在手机旋转时不触发，曾导致横屏面板卡宽残留竖屏值） |
@@ -126,6 +129,8 @@ boot()
   键盘面板打开期间它保持挂载（`controlOverlay` 则被卸载）。
 - `controlOverlay()`：底部悬浮控制层（展开=控制栏+键盘/收起按钮，收起=角落键盘/展开按钮；齿轮已移至
   右上角独立芯片）；用 `HitTestMode.None` 让空白区域触摸落到画面（DOS 鼠标）上。
+- `GamepadOverlay(...)`：自定义虚拟手柄 HUD（见 3.5），挂在 `controlOverlay` 之后、右上角齿轮芯片之前；
+  `active = !keyboardVisible && !modalOpen()` 时渲染控件，否则只保留测量用的空根节点并释放按键。
 - `imeLayer()`：覆盖全屏的**不可见** `TextArea`，点按原生聚焦即唤起系统输入法，
   `HitTestMode.Transparent` 让同一次触摸也到达 `EmulatorScreen`（字段未注册 `onMouse`/`onAxisEvent`，
   触摸板移动/点击与滚轮轴事件照常落在画布上）。内容为**受控字段**（`imeBuffer` 每次变更都写回，
@@ -153,7 +158,8 @@ boot()
 ### 2.6 设备差异
 
 - 常量 `IS_DESKTOP = deviceInfo.deviceType === '2in1'` 决定：是否显示标题行、
-  是否挂载 `imeLayer` 与 `controlOverlay`/`KeyboardPanel`、页面的 `defaultFocus`。
+  是否挂载 `imeLayer` 与 `controlOverlay`/`KeyboardPanel`/`GamepadOverlay`、页面的 `defaultFocus`。
+- 虚拟手柄 HUD 仅手机/平板挂载，2in1 的设置面板也不显示该卡片（`SettingsSheet.IS_DESKTOP`）。
 - 触屏设备底部叠加层用 `Math.max(navInsetVp, 28)` 保持对导航手势条的避让。
 
 ---
@@ -223,7 +229,7 @@ boot()
 
 | 分组 | 内容 |
 | --- | --- |
-| 模拟器 | CPU 速度（`CPU_OPTIONS` 预设）、静音、自动挂载 C:（副标题显示启动挂载目标）+ 挂载记录列表（`recentMounts` MRU，点选先激活授权并校验可达、失败提示且不改目标，再设为启动挂载目标；xmark 删除；行内删除按钮与可点区域是兄弟节点，因 `ClickEvent` 无 `stopPropagation`）、禁用系统软键盘、重启模拟器 |
+| 模拟器 | CPU 速度（`CPU_OPTIONS` 预设）、静音、自动挂载 C:（副标题显示启动挂载目标）+ 挂载记录列表（`recentMounts` MRU，点选先激活授权并校验可达、失败提示且不改目标，再设为启动挂载目标；xmark 删除；行内删除按钮与可点区域是兄弟节点，因 `ClickEvent` 无 `stopPropagation`）、禁用系统软键盘、虚拟手柄开关与「编辑虚拟按键」（仅手机/平板）、重启模拟器 |
 | 网络 | 网卡（NE2000）、TCP/UDP 端口转发、IPX 联机 |
 | 网卡参数（虚拟 NAT） | IP / 子网掩码 / 网关 / DNS（`resolvedNetworkParams()` 兜底） |
 | 关于 | 应用版本、项目仓库、反馈邮箱（mailto Want）、隐私政策、开源许可（`bindContentCover` 打开 `LicenseSheet`） |
@@ -232,7 +238,34 @@ boot()
 写回走 `AppSettings.setXxx()`。CPU/声音/网络为**启动期设置**：改动只重生成配置，
 需「重启模拟器」生效；文本框在每次输入即持久化，`onBlur` 时提示重启。
 
-### 3.5 `LicenseSheet`（[LicenseSheet.ets](../../entry/src/main/ets/view/LicenseSheet.ets)）
+### 3.5 `GamepadOverlay`（[GamepadOverlay.ets](../../entry/src/main/ets/view/GamepadOverlay.ets)）
+
+触屏自定义手柄层：半透明圆形动作键 + 一个八向摇杆。默认布局来自
+`GamepadLayout.defaultLayout()`（摇杆、Space、Enter、Ctrl、Esc）。根节点
+`HitTestMode.None`：空白区域触摸继续落到画布/IME（编辑态下页面卸载 `imeLayer`，空白点按不唤起
+系统软键盘），控件自身消费触摸；控件按归一化中心 `(cx, cy)` 定位，尺寸按
+`clamp(min(winW, winH)/780, 0.8, 1.25)` 缩放（渲染有按钮 44vp、摇杆 88vp 的触摸下限）。手柄开启时
+底部快捷栏不挂载（见 `emulatorStack`），键盘入口移到右上角芯片簇，所以底部预留只有手势条（页面传入
+`max(navInset, 28)`）。编辑态与游玩态共用同一个平面，编辑面板只是浮层：默认关闭（整屏可看可拖），
+点按控件才展开；拖动超过 4vp 时面板临时隐藏、松手按原状态恢复。面板落点按**整键矩形**判定，保证正在
+编辑的键不被遮挡：高窗口下选中键在下半区时面板翻到工具栏下方、否则驻底，上下都放不下的极端情况选
+遮挡较少的一侧；矮窗口（高 <608vp 且宽 ≥640vp，全宽面板必然压住中带）改为与选中键相反侧的侧边
+抽屉（宽 ≤340vp）。编辑拖拽把键夹取在工具栏带之下、顶部 64vp 带内右上角 112vp 芯片簇之外，键不会
+被丢进再也抓不到的角落。顶部工具栏的「展开面板 / 收起面板」手动开关，面板内也有一个收起 chevron。
+
+- **游玩**：按键 Down/Up 经 `emu.injectKey` 注入；Ctrl/Alt/Shift 为 sticky 锁存（锁存期间在
+  guest 中保持按下，普通键只发自身 down/up，不重复按/放修饰键）；摇杆按 45° 分八扇区输出方向键，
+  斜向同时按两个方向键，抬手释放全部方向。
+- **编辑**：设置面板「编辑虚拟按键」关闭 sheet 后进入；拖动用 `TouchObject.windowX/windowY`
+  计算归一化位移，松手持久化；面板支持预设改绑、S/M/L、删除、添加、恢复默认与完成。编辑态吞掉
+  所有注入，进入编辑先释放全部按键。候选键按「修饰 / 功能 / F1-F12 / 方向」四组分页，固定网格
+  （最多 6 列两行）一次显示整组、不滚动；选中控件时自动切到当前绑定所在组并高亮该键，取键面板
+  高度 204vp（矮窗口按可用高度封顶）、无选中或选中摇杆时 150vp。
+- **释放路径**：`active` 变假、`paused`、`session` 变化、进入编辑、`aboutToDisappear` 均调用
+  `releaseAll()`，避免 guest 残留按住键；同码多控件用引用计数保平。
+- **持久化**：`GamepadLayout.encode/decode` 的逐行记录写入 `settings.gamepad.layout`。
+
+### 3.6 `LicenseSheet`（[LicenseSheet.ets](../../entry/src/main/ets/view/LicenseSheet.ets)）
 
 开源许可子页（全屏模态叠加在设置面板上），逐行列出组件名/角色/许可证/源码链接，
 是 `third_party/NOTICE.md` 的用户可见呈现。点击行经 `openLink` 打开系统浏览器。

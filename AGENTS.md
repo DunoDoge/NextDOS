@@ -197,6 +197,29 @@ entry/src/main/
 - The `blockSoftKeyboard` setting (settings sheet 禁用系统软键盘, persisted via `AppSettings`) unmounts
   `imeLayer` for good: canvas taps then never summon the system soft keyboard, and text goes through `KeyboardPanel`
   or hardware keyboards only. Pure UI behavior, no engine involvement, effective the moment it is set.
+- The custom virtual gamepad HUD (`view/GamepadOverlay.ets`) is touch-only (phone/tablet, default off) and pure
+  ArkTS: one eight-way stick emits arrow scancodes plus preset action keys, with a user-editable layout persisted as
+  line records (`model/GamepadLayout.ets` -> `settings.gamepad.layout`) and normalized centers so rotation/resize
+  never drifts. Sticky Ctrl/Alt/Shift stay latched in the guest (normal keys only send their own down/up), and every
+  hide/pause/reset/edit-entry/unmount path calls `releaseAll()`; a missing release leaves the guest with a held key.
+  The root is `HitTestMode.None` so blank HUD areas still reach the canvas/IME in play mode; while `gamepadEditing`
+  the page unmounts `imeLayer` so those taps summon nothing (the editor has no text input of its own). The editor's
+  preset picker is a grouped fixed grid (修饰 / 功能 / F1-F12 / 方向, at most 6 columns and 2 rows, panel 204vp)
+  rather than a scroll list: the fixed 150vp panel left only ~48vp for the 22 presets, which is why the old chip
+  list was always clipped on a phone. While `gamepadHudOn` the bottom `ControlKeyBar` overlay is NOT mounted (the
+  keyboard toggle moves to the top-right chip cluster), so the HUD's placement area gives up only the gesture
+  inset. The edit panel is an OVERLAY on that same plane, never a reserve: it starts closed, opens on a tap (a
+  drag only moves), hides while a drag is in progress (past 4vp of travel), and never covers the key being
+  edited — tall windows flip it below the top toolbar when the key sits in the bottom band (whole-key-rect test,
+  least-overlap fallback when both placements clip a very large key), and windows shorter than 608vp with at
+  least 640vp width turn it into a side tray (<=340vp) placed on the opposite side of the key. The edit drag
+  clamp keeps keys below the toolbar band and, inside the top 64vp band, clear of the 112vp top-right chip
+  cluster, so a key can never be dropped where the chrome makes it ungrabbable. Do not reintroduce an edit-mode
+  `usableH` haircut or every key
+  shifts between edit and play. Phase 2 (real DOS
+  gameport analog
+  stick) is only a design in `docs/prd-virtual-gamepad.md`; do not add `[joystick]` config or a joystick NAPI export
+  without that design and on-device verification.
 - Guest drive C: is any folder the user picks in the system folder picker (`MountFolder`,
   `DocumentSelectMode.FOLDER`). A picked folder carries only a temporary grant, so it is persisted right away
   (`persistAccess`, needs `ohos.permission.FILE_ACCESS_PERSIST`) and re-activated before use (`activateAccess`

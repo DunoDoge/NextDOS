@@ -65,6 +65,13 @@ export class AppSettings {
    * effect on the next panel open or mode toggle, no engine involvement
    * beyond the canvas-size refit the resize itself triggers. */
   static keyboardDocked: boolean = false;
+  /** Show the custom touch gamepad HUD over the canvas (phone/tablet only).
+   * Pure UI behavior; the layout itself is persisted separately so toggling
+   * the HUD never loses the user's arrangement. */
+  static gamepadHudOn: boolean = false;
+  /** Encoded GamepadLayout (line-based, see GamepadLayout.encode); '' means
+   * the default layout has not been customized yet. */
+  static gamepadLayout: string = '';
   /** Last folder successfully mounted as C: ('' = none). */
   static lastMountDir: string = '';
   /** Picker URI of lastMountDir whose persisted grant covers it ('' = none /
@@ -147,6 +154,14 @@ export class AppSettings {
       const kbDocked: preferences.ValueType = store.getSync('keyboardDocked', AppSettings.keyboardDocked);
       if (typeof kbDocked === 'boolean') {
         AppSettings.keyboardDocked = kbDocked;
+      }
+      const gamepadOn: preferences.ValueType = store.getSync('gamepadHudOn', AppSettings.gamepadHudOn);
+      if (typeof gamepadOn === 'boolean') {
+        AppSettings.gamepadHudOn = gamepadOn;
+      }
+      const gamepadLayout: preferences.ValueType = store.getSync('gamepadLayout', AppSettings.gamepadLayout);
+      if (typeof gamepadLayout === 'string') {
+        AppSettings.gamepadLayout = gamepadLayout;
       }
       const lastDir: preferences.ValueType = store.getSync('lastMountDir', AppSettings.lastMountDir);
       if (typeof lastDir === 'string') {
@@ -235,6 +250,18 @@ export class AppSettings {
     AppSettings.keyboardDocked = value;
     AppStorage.setOrCreate('settings.keyboardDocked', value);
     AppSettings.persist('keyboardDocked', value);
+  }
+
+  static setGamepadHudOn(value: boolean): void {
+    AppSettings.gamepadHudOn = value;
+    AppStorage.setOrCreate('settings.gamepad.hudOn', value);
+    AppSettings.persist('gamepadHudOn', value);
+  }
+
+  static setGamepadLayout(value: string): void {
+    AppSettings.gamepadLayout = value;
+    AppStorage.setOrCreate('settings.gamepad.layout', value);
+    AppSettings.persist('gamepadLayout', value);
   }
 
   static setLastMountDir(value: string): void {
@@ -449,6 +476,8 @@ export class AppSettings {
     AppStorage.setOrCreate('settings.autoMount', AppSettings.autoMount);
     AppStorage.setOrCreate('settings.blockSoftKeyboard', AppSettings.blockSoftKeyboard);
     AppStorage.setOrCreate('settings.keyboardDocked', AppSettings.keyboardDocked);
+    AppStorage.setOrCreate('settings.gamepad.hudOn', AppSettings.gamepadHudOn);
+    AppStorage.setOrCreate('settings.gamepad.layout', AppSettings.gamepadLayout);
     AppStorage.setOrCreate('settings.lastMountDir', AppSettings.lastMountDir);
     AppStorage.setOrCreate('settings.lastMountUri', AppSettings.lastMountUri);
     AppStorage.setOrCreate('settings.recentMounts', AppSettings.recentMounts);

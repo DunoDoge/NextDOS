@@ -13,6 +13,7 @@ import { EmulatorScreen } from '../view/EmulatorScreen';
 import { ControlKeyBar, controlCornerButton } from '../view/ControlKeyBar';
 import { KeyboardPanel, KB_COMPACT_WIN_MAX_VP, KB_NATURAL_H_FULL,
   KB_NATURAL_H_COMPACT } from '../view/KeyboardPanel';
+import { GamepadOverlay } from '../view/GamepadOverlay';
 import { SettingsSheet } from '../view/SettingsSheet';
 
 const TAG: string = 'NextDOS';
@@ -69,6 +70,15 @@ struct Index {
   // field, so the system soft keyboard stays down and text input goes
   // through the in-app keyboard instead.
   @StorageLink('settings.blockSoftKeyboard') blockSoftKeyboard: boolean = false;
+  // settings.gamepad.hudOn: show the custom touch gamepad HUD. The layout is
+  // persisted separately, so turning the HUD off never loses an arrangement.
+  @StorageLink('settings.gamepad.hudOn') gamepadHudOn: boolean = false;
+  // In-place HUD editor, entered from the settings sheet (which closes first
+  // so the overlay is visible). Editing never injects guest keys.
+  @State gamepadEditing: boolean = false;
+  // Bumped on every engine reset so the HUD releases held keys; a reset boots
+  // the guest with a fresh keyboard state and stale HUD presses would leak.
+  @State emuSession: number = 0;
   // Text buffer of the invisible IME field (imeLayer), kept equal to the
   // field's live content on every change (controlled field: the TextArea
   // param must never lag the content, or a remount restores stale text and
@@ -350,7 +360,8 @@ struct Index {
    * stuck focus flag would silently drop every hardware key at the root.
    */
   private imeFieldActive(): boolean {
-    return this.imeFocused && !this.blockSoftKeyboard && !this.keyboardVisible;
+    return this.imeFocused && !this.blockSoftKeyboard && !this.keyboardVisible &&
+      !this.gamepadEditing;
   }
 
   /**
@@ -559,6 +570,9 @@ struct Index {
   private applyMountResult(dir: string, restarted: boolean): void {
     this.folderMounted = true;
     if (restarted) {
+      // mountFolder's internal reset() path (non-ASCII dir) reboots the guest
+      // keyboard; the HUD must drop its latched keys like every other reset.
+      this.emuSession++;
       this.paused = false;
     }
     this.showToast(restarted ? 'C: 已挂载 ' + dir + '（已重启模拟器）' : 'C: 已挂载 ' + dir);
@@ -711,7 +725,28 @@ struct Index {
   }
 
   private openSettings(): void {
+    // Opening settings always ends an in-place HUD edit; the sheet may toggle
+    // the HUD off, and a stale editing flag would remount straight into the
+    // editor on the next open.
+    this.gamepadEditing = false;
     this.showSettings = true;
+  }
+
+  /** Settings row 编辑虚拟按键: close the sheet, make sure the HUD is on, then
+   * enter the in-place editor over the live canvas. The in-app keyboard is
+   * hidden so the HUD's bottom panel cannot fight the deck. */
+  private enterGamepadEdit(): void {
+    this.showSettings = false;
+    this.keyboardVisible = false;
+    // Drop any IME focus: a tap may have raised the system soft keyboard, and
+    // it must not squeeze the canvas under the editor.
+    try {
+      this.getUIContext().getFocusController().clearFocus();
+    } catch (error) {
+      hilog.error(0x0000, TAG, 'clear focus failed: %{public}s', JSON.stringify(error));
+    }
+    AppSettings.setGamepadHudOn(true);
+    this.gamepadEditing = true;
   }
 
   /**
@@ -759,7 +794,11 @@ struct Index {
       emu: this.emu,
       onRestarted: () => {
         // reset() boots the engine running; keep the pause flag in sync.
+        this.emuSession++;
         this.paused = false;
+      },
+      onEditGamepad: () => {
+        this.enterGamepadEdit();
       }
     })
   }
@@ -833,6 +872,7 @@ struct Index {
         .tabIndex(-1)
         .onClick(() => {
           this.emu.reset();
+          this.emuSession++;
           this.paused = false;
         })
 
@@ -934,6 +974,7 @@ struct Index {
       .height(40)
       .onClick(() => {
         this.emu.reset();
+        this.emuSession++;
         this.paused = false;
       })
 
@@ -1068,6 +1109,30 @@ struct Index {
         }
       },
       transition: TransitionEffect.OPACITY.animation({ duration: 180, curve: Curve.EaseOut })
+    })
+  }
+
+  /**
+   * In-app keyboard toggle for HUD mode. The bottom quick bar owns this glyph
+   * everywhere else, but it is unmounted while the gamepad HUD is on (see
+   * emulatorStack), so the same plate sits beside the gear instead and the
+   * whole bottom band stays available to the HUD.
+   */
+  @Builder
+  hudKeyboardButton() {
+    Column() {
+      SymbolGlyph($r('sys.symbol.keyboard'))
+        .fontSize(22)
+        .fontColor(['#E6E6E6'])
+    }
+    .width(40)
+    .height(40)
+    .justifyContent(FlexAlign.Center)
+    .borderRadius(20)
+    .backgroundColor('#801E1E22')
+    .tabIndex(-1)
+    .onClick(() => {
+      this.toggleKeyboard();
     })
   }
 
@@ -1252,20 +1317,61 @@ struct Index {
     Stack({ alignContent: Alignment.Bottom }) {
       EmulatorScreen({ emu: this.emu })
       if (!IS_DESKTOP) {
-        if (!this.blockSoftKeyboard && !this.keyboardVisible) {
+        // While the panel is up (or the blockSoftKeyboard setting is on, or
+        // the HUD layout editor owns the screen) the IME field stays
+        // unmounted so a canvas tap can never summon the system keyboard:
+        // the editor has no text input of its own and a blank-canvas tap
+        // there is layout navigation, not typing (imeFieldActive mirrors
+        // this mount condition).
+        if (!this.blockSoftKeyboard && !this.keyboardVisible && !this.gamepadEditing) {
           this.imeLayer()
         }
-        if (!this.keyboardVisible) {
+        // The quick key bar is unmounted while the gamepad HUD is on: its
+        // Esc/Tab/Ctrl keys are bindable on the HUD itself, and its 120vp
+        // bottom band was the only reason the HUD had to give up the lower
+        // canvas. The keyboard toggle moves to the top-right cluster below.
+        if (!this.keyboardVisible && !this.gamepadHudOn) {
           this.controlOverlay()
         }
-        // Top-right gear chip (moved out of the bottom overlay): the
-        // HitTestMode.None wrapper leaves every touch outside the chip to
-        // the DOS mouse, and it stays mounted while the keyboard panel is
-        // up, unlike controlOverlay. 16vp keeps the chip clear of the
-        // window edges (the immersive bars are hidden, so this is pure
-        // breathing room).
+        // Custom touch gamepad HUD. Kept mounted while the setting is on so
+        // modal open/close never resets the user's arrangement; `active`
+        // hides it and releases every held key under the keyboard deck,
+        // settings sheet and quick menu. Sits above the control bar but below
+        // the gear chip, which stays reachable in edit mode.
+        if (this.gamepadHudOn) {
+          GamepadOverlay({
+            emu: this.emu,
+            active: !this.keyboardVisible && !this.modalOpen(),
+            editing: this.gamepadEditing,
+            paused: this.paused,
+            session: this.emuSession,
+            // The bar is gone, so only the gesture-indicator clearance stays
+            // out of the HUD's placement area.
+            bottomReserve: this.keyboardBottomPadVp(),
+            onExitEdit: () => {
+              this.gamepadEditing = false;
+            }
+          })
+        }
+        // Top-right chip cluster: the HitTestMode.None wrapper leaves every
+        // touch outside the chips to the DOS mouse, and it stays mounted
+        // while the keyboard panel is up, unlike controlOverlay. 16vp keeps
+        // the cluster clear of the window edges (the immersive bars are
+        // hidden, so this is pure breathing room). With the HUD on the quick
+        // bar is unmounted, so it carries the keyboard toggle in that mode;
+        // it is hidden in edit mode to leave the 完成 button's corner free.
         Stack({ alignContent: Alignment.TopEnd }) {
-          this.gearMenuButton()
+          Row({ space: 8 }) {
+            // Hidden under the settings sheet (the CENTER mask blocks it, so
+            // it would only linger as a visual residue); NOT hidden under
+            // the quick menu, whose bindPopup anchors on the neighbouring
+            // gear chip and would jump if this slot unmounted.
+            if (!IS_DESKTOP && this.gamepadHudOn && !this.gamepadEditing &&
+              !this.showSettings) {
+              this.hudKeyboardButton()
+            }
+            this.gearMenuButton()
+          }
         }
         .width('100%')
         .height('100%')

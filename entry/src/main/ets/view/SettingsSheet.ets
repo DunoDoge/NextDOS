@@ -1,5 +1,5 @@
 import { bundleManager, common, Want } from '@kit.AbilityKit';
-import { BusinessError } from '@kit.BasicServicesKit';
+import { BusinessError, deviceInfo } from '@kit.BasicServicesKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { DosEmulator } from '../model/DosEmulator';
 import { AppSettings, CpuCycleOption } from '../model/AppSettings';
@@ -16,6 +16,8 @@ const PRIVACY_URL: string =
 // (action sendToData) so the system mail app lands directly on its compose
 // screen; startAbilityByType would show an app-picker panel instead.
 const FEEDBACK_EMAIL = 'pinowcao@outlook.com';
+// The HUD is a touch control surface; 2in1 keeps its title bar + pointer flow.
+const IS_DESKTOP: boolean = deviceInfo.deviceType === '2in1';
 
 /**
  * Settings content hosted inside the half-modal sheet bound in Index. 2in1 and
@@ -47,12 +49,15 @@ export struct SettingsSheet {
   // Called after the sheet restarts the engine so Index can resync UI state
   // (e.g. its paused flag) that reset() invalidates.
   onRestarted: () => void = () => {};
+  // Closes the sheet and enters the in-place HUD editor (Index owns both).
+  onEditGamepad: () => void = () => {};
   @State versionLabel: string = '';
   @State showLicense: boolean = false;
   @StorageLink('settings.cpuCycles') cpuCycles: string = 'max';
   @StorageLink('settings.mute') mute: boolean = false;
   @StorageLink('settings.autoMount') autoMount: boolean = false;
   @StorageLink('settings.blockSoftKeyboard') blockSoftKeyboard: boolean = false;
+  @StorageLink('settings.gamepad.hudOn') gamepadHudOn: boolean = false;
   @StorageLink('settings.lastMountDir') lastMountDir: string = '';
   @StorageLink('settings.recentMounts') recentMounts: MountRecord[] = [];
   // Network group (keys must match AppSettings.seedAppStorage() verbatim).
@@ -441,6 +446,63 @@ export struct SettingsSheet {
         .strokeWidth(0.5)
         .color('#FFFFFF14')
         .margin({ left: 16 })
+
+      if (!IS_DESKTOP) {
+        Row() {
+          Column() {
+            Text('虚拟手柄')
+              .fontSize(16)
+              .fontColor('#FFFFFF')
+            Text('半透明悬浮按键，默认含八向摇杆、空格与回车')
+              .fontSize(12)
+              .fontColor('#8A8A92')
+              .margin({ top: 2 })
+          }
+          .alignItems(HorizontalAlign.Start)
+          .layoutWeight(1)
+
+          Toggle({ type: ToggleType.Switch, isOn: this.gamepadHudOn })
+            .onChange((isOn: boolean) => {
+              AppSettings.setGamepadHudOn(isOn);
+            })
+        }
+        .width('100%')
+        .padding({ left: 16, right: 16, top: 10, bottom: 10 })
+
+        Divider()
+          .strokeWidth(0.5)
+          .color('#FFFFFF14')
+          .margin({ left: 16 })
+
+        Row() {
+          Column() {
+            Text('编辑虚拟按键')
+              .fontSize(16)
+              .fontColor('#FFFFFF')
+            Text('拖动调整位置，增删按键并从预设改绑；修改会自动保存')
+              .fontSize(12)
+              .fontColor('#8A8A92')
+              .margin({ top: 2 })
+          }
+          .alignItems(HorizontalAlign.Start)
+          .layoutWeight(1)
+
+          SymbolGlyph($r('sys.symbol.chevron_right'))
+            .fontSize(16)
+            .fontColor(['#8A8A92'])
+        }
+        .width('100%')
+        .padding({ left: 16, right: 16, top: 10, bottom: 10 })
+        .hoverEffect(HoverEffect.Highlight)
+        .onClick(() => {
+          this.onEditGamepad();
+        })
+
+        Divider()
+          .strokeWidth(0.5)
+          .color('#FFFFFF14')
+          .margin({ left: 16 })
+      }
 
       Row() {
         Column() {
