@@ -465,6 +465,14 @@ bool DOS_Drive_Cache::RemoveTrailingDot(char* shortname) {
 }
 
 Bits DOS_Drive_Cache::GetLongName(CFileInfo* curDir, char* shortName, const size_t shortName_len) {
+	// Local patch (see third_party/NOTICE.md): an empty lookup key only
+	// occurs in path walks whose final component is empty (trailing
+	// slash). It must never resolve to a cache entry, or the expanded
+	// path gains a phantom component and every opendir() of it fails.
+	if (shortName[0] == '\0') {
+		return -1;
+	}
+
 	std::vector<CFileInfo*>::size_type filelist_size = curDir->fileList.size();
 	if (filelist_size <= 0) {
 		return -1;
@@ -511,6 +519,17 @@ void DOS_Drive_Cache::CreateShortName(CFileInfo* curDir, CFileInfo* info) {
 	char* tmpName = dos_name.data();
 	upcase(tmpName);
 	createShort = RemoveSpaces(tmpName);
+
+	// Local patch (see third_party/NOTICE.md): CP437 cannot represent
+	// CJK names, which fs_utf8_to_dos_437() returns as an empty string.
+	// An empty shortname must never enter the cache: GetLongName() would
+	// match it for the empty final component of a trailing-slash path
+	// walk and poison the expanded path, so every opendir() of the
+	// directory then fails and dir/ls report "File not found". Mangle
+	// unrepresentable names into ~N shortnames instead.
+	if (dos_name.empty() && info->orgname[0] != '\0') {
+		createShort = true;
+	}
 
 	// Get Length of filename
 	char* pos = strchr(tmpName,'.');

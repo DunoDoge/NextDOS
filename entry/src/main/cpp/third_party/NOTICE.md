@@ -2,11 +2,11 @@
 
 ## Provenance status (local-only patches)
 
-Three patches exist ONLY in this vendored tree and are NOT commits on the
+Four patches exist ONLY in this vendored tree and are NOT commits on the
 fork's `ohos` branch (details in the entries below): the UTF-8 autoexec
-passthrough patch, the empty-cue-parse guard and the build-hash fallback in
-the root `CMakeLists.txt`. Every other deviation listed here is tagged with
-its branch commit. Upstreaming these to
+passthrough patch, the empty-cue-parse guard, the empty-shortname guard
+and the build-hash fallback in the root `CMakeLists.txt`. Every other
+deviation listed here is tagged with its branch commit. Upstreaming these to
 <https://github.com/DunoDoge/dosbox-staging> is an open task; until then,
 updating the vendored tree from the branch tip re-applies them by hand.
 
@@ -128,6 +128,23 @@ updating the vendored tree from the branch tip re-applies them by hand.
   the whole embed process; the guard makes `SetDevice` fall through to
   `LoadIsoFile`, which rejects the file gracefully. Needed because a guest
   `mount d <slot> -t iso` of an empty image killed the app on the spot.
+- Empty-shortname guard for non-CP437 names (local patch in
+  `src/dos/drive_cache.cpp`, not yet a commit on the fork's `ohos`
+  branch): `fs_utf8_to_dos_437()` returns an empty string for names
+  CP437 cannot represent (every CJK name), and `CreateShortName()`
+  stored that empty string as the first such entry's 8.3 shortname.
+  `GetLongName()` then resolved the empty final component of a
+  trailing-slash path walk (every `localDrive::FindFirst` walks its
+  basedir this way) to that degenerate entry, appending a phantom CJK
+  orgname to the expanded path; the subsequent `opendir()` failed, so
+  `dir`/`ls` on a successfully mounted folder printed
+  `File not found`/`No files or subdirectories to display` as soon as
+  the mount root held a single CJK-named entry. Unrepresentable names
+  now mangle into `~N` shortnames (`CreateShortName` forces the
+  mangling branch when the CP437 conversion comes back empty), and
+  `GetLongName()` never resolves an empty lookup key, so a poisoned
+  expansion can no longer be cached either. CJK-named entries appear
+  as `~N` rows instead of breaking the whole directory listing.
 - Build-hash fallback patch (local patch in root `CMakeLists.txt`, not yet a
   commit on the fork's `ohos` branch): the vendored tree carries no `.git` of
   its own and the HarmonyOS native build does not always expose `git` on
